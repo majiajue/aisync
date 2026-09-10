@@ -5,6 +5,9 @@
 """
 import hashlib, io, os, platform, shutil, subprocess, sys, tarfile, urllib.request, zipfile, bz2
 from pathlib import Path
+for _s in (sys.stdout, sys.stderr):   # Windows 控制台默认 GBK/cp1252，打印非 ASCII 会崩
+    try: _s.reconfigure(encoding="utf-8")
+    except Exception: pass
 
 RESTIC_VER = os.environ.get("RESTIC_VERSION", "0.19.1")
 ROOT = Path(__file__).resolve().parent
@@ -15,7 +18,7 @@ osname = "windows" if IS_WIN else "darwin" if IS_MAC else "linux"
 exe = "restic.exe" if IS_WIN else "restic"
 
 def fetch(url):
-    print("↓", url); return urllib.request.urlopen(url, timeout=120).read()
+    print("download:", url); return urllib.request.urlopen(url, timeout=120).read()
 
 def get_restic():
     bin_dir = ROOT / "bundle" / "bin"; bin_dir.mkdir(parents=True, exist_ok=True)
