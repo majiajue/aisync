@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# aisync 命令行入口 → core.py
+exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core.py" "$@"

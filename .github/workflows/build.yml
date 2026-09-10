@@ -1,0 +1,47 @@
+name: build
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest      # Apple Silicon
+            out: dist/aisync-macos.dmg
+          - os: macos-13          # Intel
+            out: dist/aisync-macos.dmg
+            suffix: -intel
+          - os: windows-latest
+            out: dist/aisync-windows.zip
+          - os: ubuntu-22.04
+            out: dist/aisync-linux.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Linux GUI deps (pywebview 需要 GTK + WebKit2)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgirepository1.0-dev gir1.2-webkit2-4.1 libcairo2-dev pkg-config python3-dev
+      - run: pip install pywebview pyinstaller ${{ runner.os == 'Linux' && 'pygobject' || '' }}
+      - run: python build.py
+      - name: rename intel build
+        if: matrix.suffix
+        run: mv dist/aisync-macos.dmg dist/aisync-macos${{ matrix.suffix }}.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aisync-${{ matrix.os }}
+          path: dist/aisync-*
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true, path: out }
+      - uses: softprops/action-gh-release@v2
+        with: { files: out/* }

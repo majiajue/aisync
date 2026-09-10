@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>aisync</title>
+<style>
+:root{--bg:#F6F7F4;--bg2:#EDEFEA;--bg3:#FFFFFF;--ink:#1B2229;--ink2:#4A545E;--mute:#7B858E;--line:#D6DAD3;
+  --accent:#0F6E8C;--accent-ink:#fff;--accent-soft:#DCEBF0;--copper:#B4531F;--copper-soft:#F5E4D9;--ok:#3D7A3A;--ok-soft:#E1EEDD;--code:#E9ECE6}
+@media (prefers-color-scheme:dark){:root{--bg:#141A1F;--bg2:#1C242B;--bg3:#232D35;--ink:#E6EAE6;--ink2:#B4BCC2;--mute:#7F8A93;--line:#2C363E;
+  --accent:#5FB6D2;--accent-ink:#0F1A20;--accent-soft:#183038;--copper:#E08A5A;--copper-soft:#3A251A;--ok:#7FC27A;--ok-soft:#1F3320;--code:#1F282F}}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Segoe UI",sans-serif;display:flex;flex-direction:column}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,"Cascadia Mono","Noto Sans Mono CJK SC",monospace;font-size:12.5px}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--bg3);color:var(--ink);border-radius:6px;padding:6px 12px}
+button:hover{border-color:var(--accent)}button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500;padding:9px 20px}
+button.ghost{background:transparent;border-color:transparent;color:var(--ink2)}button.ghost:hover{color:var(--accent)}
+input[type=text],input[type=password],select{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg3);color:var(--ink);width:100%}
+input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+/* top */
+header{display:flex;align-items:center;gap:20px;padding:12px 22px;border-bottom:1px solid var(--line);background:var(--bg2)}
+header .brand{font-weight:700;font-size:16px;letter-spacing:.02em}
+.modes{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.modes button{border:0;border-radius:0;padding:7px 18px;background:transparent}
+.modes button.on{background:var(--accent);color:var(--accent-ink)}
+header .host{margin-left:auto;color:var(--mute);font-size:12.5px}
+/* body */
+main{flex:1;display:grid;grid-template-columns:200px 1fr;min-height:0}
+nav{border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:4px;background:var(--bg2)}
+nav button{text-align:left;border:0;background:transparent;padding:9px 12px;border-radius:6px;display:flex;justify-content:space-between}
+nav button.on{background:var(--accent-soft);color:var(--accent);font-weight:500}
+nav .cnt{color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+nav .sep{flex:1}
+section{overflow:auto;padding:18px 26px 120px}
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;position:sticky;top:-18px;background:var(--bg);padding:8px 0;z-index:2}
+.toolbar input{max-width:360px}
+.toolbar .sp{flex:1}
+.hint{color:var(--mute);font-size:13px;margin:6px 0 14px;max-width:70ch}
+.empty{padding:48px;text-align:center;color:var(--mute);border:1px dashed var(--line);border-radius:8px}
+/* groups */
+.group{border:1px solid var(--line);border-radius:8px;background:var(--bg3);margin-bottom:12px;overflow:hidden}
+.ghead{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg2);cursor:pointer;user-select:none}
+.ghead .title{font-weight:500}.ghead .path{color:var(--mute)}.ghead .n{margin-left:auto;color:var(--mute);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ghead .tw{color:var(--mute);width:14px;display:inline-block;transition:transform .15s}
+.group.open .tw{transform:rotate(90deg)}
+.rows{display:none}.group.open .rows{display:block}
+.row{display:grid;grid-template-columns:28px 1fr auto auto auto;gap:12px;align-items:center;padding:7px 14px;border-top:1px solid var(--line)}
+.row:hover{background:var(--bg2)}
+.row .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .d,.row .s{color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.pill{display:inline-block;padding:0 8px;border-radius:99px;font-size:11px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;line-height:18px}
+.pill.claude{background:var(--accent-soft);color:var(--accent)}.pill.codex{background:var(--code);color:var(--ink2)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.warn{background:var(--copper-soft);color:var(--copper)}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);margin:0}
+.codechip{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:2px 9px;border:1px solid var(--line);border-radius:99px;font-size:12px;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.codechip.on{background:var(--accent-soft);color:var(--accent);border-color:transparent}.codechip.na{opacity:.5;cursor:default}.codechip input{width:13px;height:13px}
+/* code list */
+.code .row{grid-template-columns:28px 1fr auto auto auto auto}
+/* skills */
+.kv{display:grid;grid-template-columns:200px 1fr;gap:8px 20px;max-width:760px}
+.kv dt{color:var(--mute)}.kv dd{margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}.chip{background:var(--code);border-radius:4px;padding:1px 8px;font-size:12px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line);max-width:760px}
+.opt small{display:block;color:var(--mute)}
+/* guide */
+.g{max-width:820px}.g h2{font-size:17px;margin:26px 0 8px}.g h2:first-child{margin-top:0}
+.g table{width:100%;border-collapse:collapse;font-size:13px}.g th{text-align:left;color:var(--mute);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line)}.g td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.g code,.g .cmd{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12px;background:var(--code);padding:1px 6px;border-radius:3px;word-break:break-all}
+.g .cmd{display:block;padding:8px 12px;margin:6px 0;user-select:all}
+.g a{color:var(--accent);cursor:pointer;text-decoration:underline}
+.card{border:1px solid var(--line);border-radius:8px;background:var(--bg3);padding:14px 16px;margin:10px 0}.card h3{margin:0 0 6px;font-size:14px}.card p{margin:4px 0;color:var(--ink2);font-size:13px}
+.card .f{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;align-items:center;margin:10px 0}.card .f label{color:var(--mute);font-size:13px}
+.card .r{display:flex;gap:8px;justify-content:flex-end;margin-top:8px;align-items:center}
+.cur{background:var(--ok-soft);color:var(--ok);padding:0 8px;border-radius:99px;font-size:11px}
+/* footer */
+footer{position:fixed;left:200px;right:0;bottom:0;border-top:1px solid var(--line);background:var(--bg2);padding:12px 26px;display:flex;align-items:center;gap:22px}
+footer .sum{display:flex;gap:22px;font-size:13px;color:var(--ink2)}footer .sum b{color:var(--ink);font-variant-numeric:tabular-nums}
+footer .sp{flex:1}footer .warn{color:var(--copper);font-size:13px}
+/* log drawer */
+#log{position:fixed;z-index:5;left:200px;right:0;bottom:62px;max-height:45vh;background:#151B20;color:#DDE3DD;overflow:auto;padding:0 20px 12px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;display:none;border-top:1px solid #2C363E;box-shadow:0 -6px 24px rgba(0,0,0,.35)}
+#log .bar{position:sticky;top:0;display:flex;align-items:center;gap:12px;background:#151B20;padding:8px 0;border-bottom:1px solid #2C363E;margin-bottom:8px}
+#log .bar b{color:#fff;font-weight:600}
+.pbar{height:6px;border-radius:3px;background:rgba(127,138,147,.25);overflow:hidden;min-width:160px;flex:1;max-width:360px}.pbar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s}
+#log .bar .pbar{background:#2C363E}#log .bar .pbar i{background:#5FB6D2}.ptext{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}#log .ptext{color:#DDE3DD}
+footer .prog{display:flex;align-items:center;gap:10px;flex:1}#log .bar .st{color:#8EC9DD}#log .bar .sp{flex:1}#log .bar button{background:#232D35;border:1px solid #3A454E;color:#E6EAE6;padding:3px 12px;font-size:12px}#log .bar button:hover{border-color:#8EC9DD}
+#log .ok{color:#7FC27A}#log .err{color:#E08A5A}#log .cmd{color:#8EC9DD}#log div{color:#DDE3DD}#log div.ok{color:#7FC27A}#log div.err{color:#E08A5A}#log div.cmd{color:#8EC9DD}
+#log.show{display:block}
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:10}
+.modal.show{display:flex}.box{background:var(--bg3);border-radius:10px;padding:22px 26px;width:560px;max-width:92vw;display:flex;flex-direction:column;gap:12px}
+.box h3{margin:0 0 4px}.box label{font-size:13px;color:var(--ink2)}.box .r{display:flex;gap:10px;justify-content:flex-end}
+.tools{display:flex;flex-wrap:wrap;gap:6px}
+@media (max-width:760px){main{grid-template-columns:1fr}nav{flex-direction:row;overflow:auto}footer,#log{left:0}}
+</style></head><body>
+<header>
+  <span class="brand">aisync</span>
+  <div class="modes"><button id="m-push" class="on" onclick="setMode('push')">同步上云</button><button id="m-restore" onclick="setMode('restore')">从云恢复</button></div>
+  <span class="host" id="host"></span>
+  <button class="ghost" onclick="openSettings()">⚙ 设置</button>
+</header>
+<main>
+  <nav>
+    <button id="n-sessions" class="on" onclick="setTab('sessions')"><span>会话</span><span class="cnt" id="c-sessions"></span></button>
+    <button id="n-code" onclick="setTab('code')"><span>代码</span><span class="cnt" id="c-code"></span></button>
+    <button id="n-skills" onclick="setTab('skills')"><span>技能与配置</span><span class="cnt" id="c-skills"></span></button>
+    <button id="n-guide" onclick="setTab('guide')"><span>安装与配置</span><span class="cnt" id="c-guide"></span></button>
+    <div class="sep"></div>
+    <button class="ghost" onclick="toggleLog()">📋 日志</button>
+  </nav>
+  <section id="view"></section>
+</main>
+<div id="log"></div>
+<footer>
+  <div class="sum" id="sum"></div><div class="sp"></div><div class="prog" id="fprog" hidden><div class="pbar"><i id="fbar"></i></div><span class="ptext" id="ftext"></span></div>
+  <span class="warn" id="warn"></span>
+  <button id="go" class="primary" onclick="go()">上云</button>
+</footer>
+<div class="modal" id="settings"><div class="box">
+  <h3>云端设置</h3>
+  <label>L1 git 远端（技能、配置、记忆、云端清单）<input type="text" id="s-git" placeholder="git@github.com:you/aisync-config.git"></label>
+  <label>L2 restic 仓库（会话记录与代码）<input type="text" id="s-restic" placeholder="rclone:gdrive:aisync  或  s3:https://xxx.r2.cloudflarestorage.com/aisync  或  /Volumes/SamSung/aisync-restic"></label>
+  <label>restic 仓库密码（只写入本机 ~/aisync/.restic-pass，请另存到密码管理器）<input type="password" id="s-pass" placeholder="留空则不修改"></label>
+  <div><label>本机工具</label><div class="tools" id="s-tools"></div></div>
+  <div class="r"><button onclick="closeSettings()">取消</button><button class="primary" onclick="saveSettings()">保存</button></div>
+</div></div>
+<script>
+let mode='push', tab='sessions', data=null, st=null, snapshot='';
+const sel={claude:new Set(), codex:new Set(), code:new Set(), config:true, history:true, sqlite:true, autoCode:true};
+const $=s=>document.querySelector(s);
+const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(0)+' K':b<1073741824?(b/1048576).toFixed(1)+' M':(b/1073741824).toFixed(2)+' G';
+const dt=(s,m)=>{const d=s?new Date(s):new Date(m*1000);return isNaN(d)?'':d.toISOString().slice(0,10)};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=(p,b)=>fetch(p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{}).then(r=>r.json());
+
+async function load(){
+  st=await api('/api/status');
+  $('#host').textContent='';
+  if(mode==='push'){ data=await api('/api/inventory'); $('#host').textContent=`本机 ${data.host} · ${data.home}`;
+    const saved=await api('/api/selection'); if(saved.claude_sessions){sel.claude=new Set(saved.claude_sessions);sel.codex=new Set(saved.codex_sessions||[]);sel.code=new Set(saved.code||[]);}
+    else{ // 默认：最近 90 天会话 + 存在的代码目录
+      const cutoff=Date.now()/1000-90*86400;
+      data.claude.forEach(p=>p.sessions.forEach(s=>{if(s.mtime>cutoff)sel.claude.add(s.path)}));
+      data.codex.forEach(s=>{if(s.mtime>cutoff)sel.codex.add(s.path)});
+    }
+  } else { data=await api('/api/catalog');
+    if(data.missing){data=null} else { $('#host').textContent=`云端清单来自 ${data.meta.host} · ${data.meta.time.slice(0,16).replace('T',' ')}`;
+      sel.claude=new Set(data.claude.flatMap(p=>p.sessions.map(s=>s.path))); sel.codex=new Set(data.codex.map(s=>s.path)); sel.code=new Set(data.code.map(c=>c.path)); }
+  }
+  render();
+}
+function setMode(m){mode=m;$('#m-push').classList.toggle('on',m==='push');$('#m-restore').classList.toggle('on',m==='restore');$('#go').textContent=m==='push'?'上云':'恢复到本机';load()}
+function setTab(t){tab=t;document.querySelectorAll('nav button[id^=n-]').forEach(b=>b.classList.toggle('on',b.id==='n-'+t));render()}
+
+function render(){
+  const v=$('#view');
+  if(tab==='guide'){renderGuide(v);sum();return}
+  if(!data){ v.innerHTML=mode==='restore'?`<div class="card" style="max-width:640px;margin:40px auto"><h3>从云端接回这台电脑</h3>
+      <p>只需要两样：旧电脑用的 git 仓库地址，和当时设的密码。配置、rclone 授权、restic 仓库地址都加密存在仓库里，会按本系统自动写回正确位置。</p>
+      <div class="f"><label>git 远端</label><input type="text" id="su-git" value="${esc(st.conf.AISYNC_GIT_REMOTE||'')}" placeholder="git@github.com:you/aisync-config.git 或 https://user:TOKEN@github.com/you/aisync-config.git">
+      <label>密码</label><input type="password" id="su-pw" placeholder="旧电脑上设置的 restic 密码"></div>
+      <div class="r"><button class="primary" onclick="setup()">恢复配置并拉取云端清单</button></div>
+      <p class="hint" style="margin-top:10px">用 SSH 地址需要先把本机公钥加到 GitHub；用 HTTPS 把 token 写进地址最省事。</p></div>`:`<div class="empty">正在读取本机…</div>`;
+    $('#c-sessions').textContent=$('#c-code').textContent=$('#c-skills').textContent='';sum();return }
+  const nS=data.claude.reduce((a,p)=>a+p.sessions.length,0)+data.codex.length;
+  $('#c-sessions').textContent=nS;$('#c-code').textContent=data.code.length;$('#c-skills').textContent=data.skills.claude_skills.length+data.skills.codex_skills.length;
+  ({sessions:renderSessions,code:renderCode,skills:renderSkills,guide:renderGuide})[tab](v); sum();
+}
+function groupsOf(){
+  const g={};
+  data.claude.forEach(p=>{const k=p.cwd||p.key;(g[k]??={cwd:k,items:[]}).items.push(...p.sessions.map(s=>({...s,src:'claude'})))});
+  data.codex.forEach(s=>{const k=s.cwd||'(未知目录)';(g[k]??={cwd:k,items:[]}).items.push({...s,src:'codex'})});
+  return Object.values(g).map(x=>{x.items.sort((a,b)=>b.mtime-a.mtime);x.last=x.items[0].mtime;return x}).sort((a,b)=>b.last-a.last);
+}
+function renderSessions(v){
+  const q=(window._q||'').toLowerCase(); const groups=groupsOf();
+  let h=`<div class="toolbar"><input type="text" placeholder="搜索标题或目录…" value="${esc(window._q||'')}" oninput="window._q=this.value;renderSessions(document.querySelector('#view'))"><span class="sp"></span>
+    <label class="codechip ${sel.autoCode?'on':''}" style="margin:0"><input type="checkbox" ${sel.autoCode?'checked':''} onchange="sel.autoCode=this.checked;renderSessions($('#view'))">勾会话时自动带上代码目录</label><button onclick="bulk(true)">全选可见</button><button onclick="bulk(false)">清空可见</button>${mode==='push'?'<button onclick="recent(30)">最近 30 天</button><button onclick="recent(90)">最近 90 天</button>':''}</div>
+    <p class="hint">${mode==='push'?'勾选要上云的会话。按项目目录分组，标题取自会话名或第一句提问。':'勾选要恢复到这台电脑的会话。恢复后在对应目录里运行 claude --resume 或 codex resume 即可继续。'}</p>`;
+  if(mode==='restore'&&st.snapshots.length){h+=`<p class="hint">快照：<select style="width:auto" onchange="snapshot=this.value">${st.snapshots.slice().reverse().map(s=>`<option value="${s.id}">${s.id} · ${s.time.slice(0,16).replace('T',' ')} · ${s.host}</option>`).join('')}</select></p>`}
+  for(const g of groups){
+    const items=g.items.filter(s=>!q||s.title.toLowerCase().includes(q)||g.cwd.toLowerCase().includes(q)); if(!items.length)continue;
+    const nSel=items.filter(s=>sel[s.src].has(s.path)).length, all=nSel===items.length, some=nSel>0&&!all;
+    const open=q||nSel>0&&nSel<items.length||groups.indexOf(g)<2;
+    h+=`<div class="group ${open?'open':''}"><div class="ghead" onclick="this.parentNode.classList.toggle('open')">
+      <input type="checkbox" ${all?'checked':''} ${some?'data-ind=1':''} onclick="event.stopPropagation();grp(this,${JSON.stringify(items.map(s=>[s.src,s.path]))})">
+      <span class="tw">▶</span><span class="title">${esc(g.cwd.split(/[\\/]/).slice(-1)[0]||g.cwd)}</span><span class="path mono">${esc(g.cwd)}</span>${codeChip(g.cwd)}
+      <span class="n">${nSel}/${items.length} · ${fmt(items.reduce((a,s)=>a+s.size,0))}</span></div><div class="rows">`;
+    for(const s of items) h+=`<label class="row"><input type="checkbox" ${sel[s.src].has(s.path)?'checked':''} onchange="tog('${s.src}','${esc(s.path)}',this.checked);renderSessions($('#view'))"><span class="t" title="${esc(s.title)}">${esc(s.title)}</span><span class="pill ${s.src}">${s.src}</span><span class="d">${dt(s.ts,s.mtime)}</span><span class="s">${fmt(s.size)}</span></label>`;
+    h+=`</div></div>`;
+  }
+  v.innerHTML=h; v.querySelectorAll('[data-ind]').forEach(c=>c.indeterminate=true);
+  if(!groups.length) v.innerHTML+=`<div class="empty">没有会话</div>`;
+}
+function renderCode(v){
+  let h=`<p class="hint">${mode==='push'?'这些是会话里出现过的项目目录。勾选后整个目录（排除 node_modules、.git、构建产物）会随会话一起进入加密快照，新电脑上恢复到同一路径。已经在 git 远端的项目可以不选，用 git clone 更省空间。':'勾选要恢复到本机的代码目录。会原路恢复，如果用户名不同会自动重映射。'}</p><div class="code">`;
+  for(const c of data.code){
+    h+=`<label class="row"><input type="checkbox" ${sel.code.has(c.path)?'checked':''} ${mode==='push'&&!c.exists?'disabled':''} onchange="tog('code','${esc(c.path)}',this.checked)">
+      <span class="t mono" title="${esc(c.path)}">${esc(c.path)}</span>
+      <span class="d">${c.claude?`claude ${c.claude}`:''} ${c.codex?`codex ${c.codex}`:''}</span>
+      <span>${c.git?'<span class="pill ok">git</span>':''}</span><span>${mode==='push'&&!c.exists?'<span class="pill warn">目录不存在</span>':''}</span>
+      <span class="s">${c.size==null?"计算中…":fmt(c.size)+(c.size_truncated?"+":"")}</span></label>`;
+  }
+  v.innerHTML=h+'</div>'+(data.code.length?'':'<div class="empty">没有代码目录</div>');
+}
+function renderSkills(v){
+  const k=data.skills;
+  v.innerHTML=`<p class="hint">这一层走 git，体积小，整体同步：技能、agents、命令、全局 CLAUDE.md / AGENTS.md、设置（密钥已脱敏）、每个项目的持久记忆、Codex 记忆。</p>
+  <dl class="kv">
+   <dt>Claude 技能 ${k.claude_skills.length}</dt><dd class="chips">${k.claude_skills.map(s=>`<span class="chip">${esc(s)}</span>`).join('')}</dd>
+   <dt>Claude agents ${k.claude_agents.length}</dt><dd class="chips">${k.claude_agents.map(s=>`<span class="chip">${esc(s.replace('.md',''))}</span>`).join('')}</dd>
+   <dt>Claude 命令 ${k.claude_commands.length}</dt><dd class="chips">${k.claude_commands.map(s=>`<span class="chip">${esc(s.replace('.md',''))}</span>`).join('')}</dd>
+   <dt>Claude 项目记忆</dt><dd>${k.claude_memories} 个项目</dd>
+   <dt>Codex 技能 ${k.codex_skills.length}</dt><dd class="chips">${k.codex_skills.map(s=>`<span class="chip">${esc(s)}</span>`).join('')}</dd>
+   <dt>Codex 记忆</dt><dd>${k.codex_memories} 个文件</dd>
+  </dl>
+  <div style="margin-top:22px">
+   <label class="opt"><input type="checkbox" ${sel.config?'checked':''} onchange="sel.config=this.checked;sum()"><span>技能与配置层（L1）<small>${mode==='push'?'提交并推送到 git 远端':'从 git 远端拉回并写入 ~/.claude 与 ~/.codex，原文件先备份'}</small></span></label>
+   <label class="opt"><input type="checkbox" ${sel.history?'checked':''} onchange="sel.history=this.checked;sum()"><span>命令历史与任务<small>~/.claude/history.jsonl、tasks，~/.codex/session_index.jsonl</small></span></label>
+   <label class="opt"><input type="checkbox" ${sel.sqlite?'checked':''} onchange="sel.sqlite=this.checked;sum()"><span>Codex 数据库（会话索引 1.3G、记忆、状态）<small>${mode==='push'?'用 sqlite .backup 做一致性备份，restic 会去重':'恢复到 ~/aisync/restored，需退出 Codex 后手动拷回'}</small></span></label>
+  </div>`;
+}
+const TOOLS={
+  git:{name:'git',why:'必需。L1 技能与配置层走 git 仓库',mac:{cmd:'xcode-select --install',url:'https://git-scm.com/download/mac'},win:{cmd:'winget install Git.Git',url:'https://git-scm.com/download/win'},linux:{cmd:'sudo apt install git',url:'https://git-scm.com/download/linux'}},
+  restic:{name:'restic',why:'必需。L2 会话与代码的加密快照。桌面版已内置',mac:{cmd:'brew install restic',url:'https://github.com/restic/restic/releases/latest'},win:{cmd:'winget install restic.restic',url:'https://github.com/restic/restic/releases/latest'},linux:{cmd:'sudo apt install restic',url:'https://github.com/restic/restic/releases/latest'}},
+  rclone:{name:'rclone',why:'连接 Google Drive / R2 / OneDrive 等网盘。桌面版已内置',mac:{cmd:'brew install rclone',url:'https://rclone.org/downloads/'},win:{cmd:'winget install Rclone.Rclone',url:'https://rclone.org/downloads/'},linux:{cmd:'sudo -v ; curl https://rclone.org/install.sh | sudo bash',url:'https://rclone.org/install/'}},
+  node:{name:'Node.js',why:'安装 claude 和 codex 命令行需要',mac:{cmd:'brew install node',url:'https://nodejs.org/'},win:{cmd:'winget install OpenJS.NodeJS.LTS',url:'https://nodejs.org/'},linux:{cmd:'sudo apt install nodejs npm',url:'https://nodejs.org/'}},
+  claude:{name:'Claude Code',why:'新电脑上恢复后用它继续会话',all:{cmd:'npm install -g @anthropic-ai/claude-code',url:'https://docs.anthropic.com/en/docs/claude-code/setup'}},
+  codex:{name:'Codex',why:'新电脑上恢复后用它继续会话',all:{cmd:'npm install -g @openai/codex',url:'https://github.com/openai/codex'}},
+  gh:{name:'GitHub CLI',why:'可选。一条命令建私有仓库并登录',mac:{cmd:'brew install gh',url:'https://cli.github.com/'},win:{cmd:'winget install GitHub.cli',url:'https://cli.github.com/'},linux:{cmd:'sudo apt install gh',url:'https://cli.github.com/'}},
+};
+function plat(){return st.platform==='darwin'?'mac':st.platform==='win32'?'win':'linux'}
+function openExt(u){api('/api/open',{url:u})}
+function renderGuide(v){
+  const P=plat(), pn={mac:'macOS',win:'Windows',linux:'Linux'}[P];
+  const rows=Object.entries(TOOLS).map(([k,t])=>{const i=t.all||t[P];const ok=st.tools[k];return `<tr><td><b>${t.name}</b> ${ok?'<span class="cur">已安装</span>':'<span class="pill warn">未安装</span>'}</td><td>${t.why}</td><td>${ok?'':`<code>${esc(i.cmd)}</code><br><a onclick="openExt('${i.url}')">下载页面 ↗</a>`}</td></tr>`}).join('');
+  const cur=st.conf.RESTIC_REPOSITORY||'';
+  v.innerHTML=`<div class="g">
+  <h2>本机工具（${pn}）</h2>
+  <table><tr><th>工具</th><th>用途</th><th>安装</th></tr>${rows}</table>
+  <p class="hint">${P==='mac'?'<b>macOS 权限</b>：要备份「下载」「桌面」「文稿」或移动硬盘里的代码目录，需要到 <a onclick="api(\'/api/open-privacy\',{})">系统设置 → 隐私与安全性 → 完全磁盘访问权限 ↗</a> 打开 aisync 的开关（~/.claude 和 ~/.codex 不受此限制）。<br>':''}桌面版自带 restic 和 rclone，不需要单独装。命令行版才需要按上表安装。Windows 上 winget 是系统自带的包管理器，在 PowerShell 里运行。</p>
+
+  <h2>第一步：git 远端（技能、配置、记忆）</h2>
+  <div class="card"><h3>GitHub 私有仓库 ${st.conf.AISYNC_GIT_REMOTE?'<span class="cur">已设置</span>':''}</h3>
+   <p>1. 打开 <a onclick="openExt('https://github.com/new')">github.com/new ↗</a>，仓库名填 <code>aisync-config</code>，选 <b>Private</b>，不要勾选 README，创建。</p>
+   <p>2. 让本机能免密推送，二选一：</p>
+   <p>&nbsp;&nbsp;<b>SSH</b>（推荐）：<span class="cmd">ssh-keygen -t ed25519 -C "aisync" -f ~/.ssh/id_ed25519 -N ""</span>然后把 <code>~/.ssh/id_ed25519.pub</code> 的内容粘到 <a onclick="openExt('https://github.com/settings/ssh/new')">github.com/settings/ssh/new ↗</a>，远端地址用 <code>git@github.com:你的用户名/aisync-config.git</code></p>
+   <p>&nbsp;&nbsp;<b>HTTPS + Token</b>：到 <a onclick="openExt('https://github.com/settings/tokens?type=beta')">github.com/settings/tokens ↗</a> 建一个只对该仓库有 Contents 读写权限的 token，远端地址用 <code>https://你的用户名:TOKEN@github.com/你的用户名/aisync-config.git</code>（token 只存在本机 aisync.conf）</p>
+   <p>&nbsp;&nbsp;<b>或用 GitHub CLI 一步到位</b>：<span class="cmd">gh auth login && gh repo create aisync-config --private</span></p>
+   <div class="f"><label>远端地址</label><input type="text" id="g-git" value="${esc(st.conf.AISYNC_GIT_REMOTE||'')}" placeholder="git@github.com:you/aisync-config.git"></div>
+   <div class="r"><button onclick="gitTest()">保存并测试连接</button></div>
+  </div>
+
+  <h2>第二步：restic 仓库（会话与代码，端到端加密）</h2>
+  <p class="hint">当前：${cur?`<code>${esc(cur)}</code>`:'<span class="pill warn">未设置</span>'}　三选一即可，之后也能换。</p>
+  <div class="card"><h3>Google Drive ${cur.startsWith('rclone:gdrive')?'<span class="cur">当前使用</span>':''}</h3>
+   <p>点下面按钮会用内置 rclone 打开浏览器做 Google 授权，允许后自动把仓库设为 <code>rclone:gdrive:aisync</code>。授权信息只存在本机 rclone.conf。</p>
+   <p>国内网络需要能访问 Google；如果浏览器打不开，去日志抽屉里复制那条链接手动打开。</p>
+   <p><b>强烈建议用自己的 Client ID</b>：rclone 共享的 client_id 配额很小，上传几百 MB 就会报 <code>rateLimitExceeded</code> 变得极慢，而且它将在 2026 年停用。步骤（约 5 分钟）：<br>① <a onclick="openExt('https://console.cloud.google.com/apis/library/drive.googleapis.com')">启用 Google Drive API ↗</a><br>② <a onclick="openExt('https://console.cloud.google.com/apis/credentials/consent')">OAuth 同意屏幕 ↗</a>：选「外部」，应用名随便填<br>③ <b><a onclick="openExt('https://console.cloud.google.com/auth/audience')">Audience ↗</a> → Test users → Add users，填你自己的 Gmail</b>。漏了这步授权时会报「Access blocked: has not completed the Google verification process」。也可以在同一页点 Publish app 发布，授权时点「高级 → 继续」即可，且 token 不会 7 天过期<br>④ <a onclick="openExt('https://console.cloud.google.com/apis/credentials/oauthclient')">创建 OAuth 客户端 ↗</a>：类型选「桌面应用」，复制 ID 和 Secret 填到下面，重新点授权。详细图文：<a onclick="openExt('https://rclone.org/drive/#making-your-own-client-id')">rclone 文档 ↗</a></p>
+   <div class="f"><label>Client ID（可选）</label><input type="text" id="gd-id" placeholder="xxxx.apps.googleusercontent.com"><label>Client Secret（可选）</label><input type="password" id="gd-secret"></div>
+   <div class="r">${st.rclone_remotes.includes('gdrive')?'<span class="cur">已授权</span>':''}<button class="primary" onclick="runBackend('/api/backend/gdrive',{client_id:$('#gd-id').value.trim(),client_secret:$('#gd-secret').value})">授权并使用 Google Drive</button></div>
+  </div>
+  <div class="card"><h3>Cloudflare R2 ${cur.startsWith('rclone:r2')?'<span class="cur">当前使用</span>':''}</h3>
+   <p>10 GB 免费，无下行流量费，国内可直连，最推荐。步骤：</p>
+   <p>1. 注册并进入 <a onclick="openExt('https://dash.cloudflare.com/?to=/:account/r2')">Cloudflare R2 控制台 ↗</a>，「创建存储桶」，名字如 <code>aisync</code>。</p>
+   <p>2. 右侧「管理 R2 API 令牌」→「创建 API 令牌」，权限选 <b>对象读和写</b>，只限这个桶。记下 Access Key ID、Secret Access Key。</p>
+   <p>3. Account ID 在 R2 概览页右侧，或 API 令牌页 endpoint 里 <code>https://&lt;Account ID&gt;.r2.cloudflarestorage.com</code>。</p>
+   <div class="f"><label>Account ID</label><input type="text" id="r2-acct"><label>Bucket</label><input type="text" id="r2-bucket" value="aisync"><label>Access Key ID</label><input type="text" id="r2-key"><label>Secret Access Key</label><input type="password" id="r2-secret"></div>
+   <div class="r"><button class="primary" onclick="runBackend('/api/backend/r2',{account_id:$('#r2-acct').value.trim(),bucket:$('#r2-bucket').value.trim(),access_key:$('#r2-key').value.trim(),secret_key:$('#r2-secret').value})">保存并使用 R2</button></div>
+  </div>
+  <div class="card"><h3>本地目录 / 移动硬盘 / NAS ${cur&&!cur.startsWith('rclone:')?'<span class="cur">当前使用</span>':''}</h3>
+   <p>不走互联网，两台电脑都能挂载同一块盘或同一个共享目录时最快。iCloud Drive、坚果云、OneDrive 的同步文件夹也可以填在这里，由它们负责上云（大量小文件时会慢）。</p>
+   <div class="f"><label>目录</label><input type="text" id="loc-path" placeholder="${P==='win'?'D:\\aisync-restic':'/Volumes/SamSung/aisync-restic'}"></div>
+   <div class="r"><button class="primary" onclick="api('/api/backend/local',{path:$('#loc-path').value.trim()}).then(r=>{if(r.error)alert(r.error);else load()})">使用这个目录</button></div>
+  </div>
+  <div class="card"><h3>其他网盘 ${cur.startsWith('rclone:')&&!cur.startsWith('rclone:gdrive')&&!cur.startsWith('rclone:r2')?'<span class="cur">当前使用</span>':''}</h3>
+   <p>不用开终端，选类型填几项即可。OneDrive / Dropbox / Box / pCloud 会自动打开浏览器授权。</p>
+   <div class="f"><label>类型</label><select id="rc-type" style="width:auto" onchange="rcFields()">
+     <option value="onedrive">OneDrive（微软，个人/企业）</option><option value="dropbox">Dropbox</option><option value="box">Box</option><option value="pcloud">pCloud</option>
+     <option value="webdav">WebDAV（坚果云、Nextcloud、群晖、阿里云盘 WebDAV 网关…）</option>
+     <option value="s3">S3 兼容（阿里云 OSS、腾讯云 COS、七牛、MinIO、AWS…）</option><option value="b2">Backblaze B2</option>
+     <option value="sftp">SFTP（自己的服务器 / NAS）</option><option value="smb">SMB 共享（Windows 共享 / NAS）</option></select>
+   <label>远端名</label><input type="text" id="rc-name" value="onedrive" placeholder="英文，如 onedrive"></div>
+   <div id="rc-fields" class="f"></div>
+   <div class="f"><label>仓库路径</label><input type="text" id="rc-path" value="aisync" placeholder="网盘里存放快照的文件夹；S3/B2 填 桶名/aisync"></div>
+   <div class="r"><button class="primary" onclick="rcSave()">保存并使用</button></div>
+   <p class="hint" style="margin-top:8px">要用 rclone 支持的其他 70 多种后端，或高级参数：<a onclick="openExt('https://rclone.org/overview/')">rclone.org/overview ↗</a>，用应用自带的 rclone 在终端配置：<code id="rc-bin">…</code> <a onclick="copyRc()">复制路径</a>，配好后在右上角 ⚙ 设置把仓库填成 <code>rclone:远端名:aisync</code>。</p>
+  </div>
+
+  <h2>第三步：restic 密码 ${st.restic_pass?'<span class="cur">已设置</span>':'<span class="pill warn">未设置</span>'}</h2>
+  <div class="card"><p>所有快照用这个密码加密，配置文件和 rclone 授权也用它加密后随 git 仓库上云，<b>密码本身不上云，丢了就再也解不开</b>。生成后请立刻存进密码管理器。换电脑时只需要 git 地址和这个密码。</p>
+   <div class="f"><label>密码</label><input type="text" id="rp" placeholder="点右边生成，或自己填"></div>
+   <div class="r"><button onclick="$('#rp').value=genPass()">生成随机密码</button><button class="primary" onclick="api('/api/restic-pass',{password:$('#rp').value}).then(r=>{if(r.error)alert(r.error);else{alert('已保存到 ~/aisync/.restic-pass');load()}})">保存</button></div>
+  </div>
+
+  <h2>新电脑</h2>
+  <div class="card"><p>1. 装本应用（${P==='mac'?'dmg 拖到应用程序，首次右键「打开」':P==='win'?'解压 aisync.exe 放任意目录；需要 Git for Windows 和 WebView2（Win10/11 自带）':'解压后 chmod +x aisync；需要 gir1.2-webkit2-4.1 和 git'}）。</p>
+   <p>2. 把旧电脑的 <code>~/aisync/aisync.conf</code>、<code>~/aisync/.restic-pass</code> 和 <code>~/.config/rclone/rclone.conf</code>（Windows 在 <code>%APPDATA%\rclone</code>）拷到新电脑同样位置。</p>
+   <p>3. 装 Node.js，然后 <code>npm i -g @anthropic-ai/claude-code @openai/codex</code>，分别登录。</p>
+   <p>4. 打开本应用 → 从云恢复 → 拉取云端清单 → 勾选 → 恢复到本机。</p>
+  </div></div>`;
+}
+const RC_FIELDS={
+  onedrive:[],dropbox:[],box:[],pcloud:[],
+  webdav:[['url','服务器地址','https://dav.jianguoyun.com/dav/'],['user','用户名',''],['pass','密码 / 应用密码','']],
+  s3:[['provider','服务商','Alibaba / TencentCOS / Qiniu / Minio / AWS / Other'],['endpoint','Endpoint','oss-cn-hangzhou.aliyuncs.com'],['access_key_id','Access Key ID',''],['secret_access_key','Secret Access Key','']],
+  b2:[['account','Key ID',''],['key','Application Key','']],
+  sftp:[['host','主机',''],['port','端口（默认 22）',''],['user','用户名',''],['pass','密码','']],
+  smb:[['host','主机 / NAS 地址',''],['user','用户名',''],['pass','密码','']]};
+const RC_HINT={onedrive:'点保存后浏览器会打开微软登录页；企业账号选 OneDrive Business。',dropbox:'点保存后浏览器打开 Dropbox 授权。',box:'',pcloud:'',
+  webdav:'坚果云：账户信息 → 安全选项 → 添加应用 生成应用密码，地址 https://dav.jianguoyun.com/dav/。群晖：开启 WebDAV Server，地址 https://IP:5006。',
+  s3:'阿里云 OSS provider 填 Alibaba，endpoint 如 oss-cn-hangzhou.aliyuncs.com；腾讯云 COS 填 TencentCOS，endpoint 如 cos.ap-guangzhou.myqcloud.com；仓库路径填 桶名/aisync。',
+  b2:'在 B2 控制台 Application Keys 创建；仓库路径填 桶名/aisync。',sftp:'也支持密钥登录：留空密码，rclone 会用 ~/.ssh 里的默认密钥。',smb:'仓库路径填 共享名/aisync。'};
+function rcFields(){const k=$('#rc-type').value;$('#rc-name').value=k;$('#rc-fields').innerHTML=RC_FIELDS[k].map(([n,l,ph])=>`<label>${l}</label><input type="${n==='pass'||n==='secret_access_key'||n==='key'?'password':'text'}" data-k="${n}" placeholder="${esc(ph)}">`).join('')+(RC_HINT[k]?`<label></label><small style="color:var(--mute)">${RC_HINT[k]}</small>`:'')}
+async function rcSave(){const params={};document.querySelectorAll('#rc-fields input').forEach(i=>params[i.dataset.k]=i.value.trim());await runBackend('/api/backend/rclone',{type:$('#rc-type').value,name:$('#rc-name').value.trim(),path:$('#rc-path').value.trim(),params})}
+async function copyRc(){const r=await api('/api/rclone-path');try{await navigator.clipboard.writeText(r.path||'')}catch(e){}alert('已复制：'+(r.path||'未找到'))}
+function genPass(){const a='abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';const b=new Uint32Array(28);crypto.getRandomValues(b);return [...b].map(x=>a[x%a.length]).join('')}
+async function runBackend(path,body){const r=await api(path,body);if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
+async function gitTest(){const v=$('#g-git').value.trim();if(!v){alert('先填远端地址');return}const r=await api('/api/backend/git',{remote:v});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
+function codeOf(cwd){return data.code.find(c=>c.path===cwd)}
+function codeChip(cwd){const c=codeOf(cwd);if(!c)return '';const on=sel.code.has(c.path);const na=mode==='push'&&!c.exists;
+  return `<label class="codechip ${on?'on':''} ${na?'na':''}" title="${na?'目录已不存在':'把整个项目代码目录一起'+(mode==='push'?'上云':'恢复')}" onclick="event.stopPropagation()"><input type="checkbox" ${on?'checked':''} ${na?'disabled':''} onchange="tog('code','${esc(c.path)}',this.checked);renderSessions($('#view'))">代码目录 ${c.size==null?'…':fmt(c.size)}${c.git?' · git':''}</label>`}
+function autoCode(src,p,on){if(!on||!sel.autoCode)return;const s=[...data.claude.flatMap(x=>x.sessions),...data.codex].find(x=>x.path===p);const c=s&&s.cwd&&codeOf(s.cwd);if(c&&(c.exists||mode==='restore'))sel.code.add(c.path)}
+function tog(src,p,on){on?sel[src].add(p):sel[src].delete(p);if(src!=='code')autoCode(src,p,on);sum();persist()}
+function grp(cb,items){items.forEach(([s,p])=>{cb.checked?sel[s].add(p):sel[s].delete(p);autoCode(s,p,cb.checked)});renderSessions($('#view'));sum();persist()}
+function bulk(on){const q=(window._q||'').toLowerCase();groupsOf().forEach(g=>g.items.forEach(s=>{if(!q||s.title.toLowerCase().includes(q)||g.cwd.toLowerCase().includes(q))on?sel[s.src].add(s.path):sel[s.src].delete(s.path)}));renderSessions($('#view'));sum();persist()}
+function recent(d){const c=Date.now()/1000-d*86400;sel.claude.clear();sel.codex.clear();data.claude.forEach(p=>p.sessions.forEach(s=>{if(s.mtime>c)sel.claude.add(s.path)}));data.codex.forEach(s=>{if(s.mtime>c)sel.codex.add(s.path)});renderSessions($('#view'));sum();persist()}
+function payload(){return {claude_sessions:[...sel.claude],codex_sessions:[...sel.codex],code:[...sel.code],config:sel.config,include_history:sel.history,include_sqlite:sel.sqlite,sqlite:sel.sqlite,snapshot:snapshot}}
+let _pt;function persist(){if(mode!=='push')return;clearTimeout(_pt);_pt=setTimeout(()=>api('/api/selection',payload()),400)}
+function sum(){
+  if(!data){$('#sum').innerHTML='';$('#go').disabled=true;return}
+  const all=[...data.claude.flatMap(p=>p.sessions),...data.codex]; const bytes=all.filter(s=>sel.claude.has(s.path)||sel.codex.has(s.path)).reduce((a,s)=>a+s.size,0)+data.code.filter(c=>sel.code.has(c.path)).reduce((a,c)=>a+(c.size||0),0);
+  $('#sum').innerHTML=`<span>会话 <b>${sel.claude.size+sel.codex.size}</b></span><span>代码目录 <b>${sel.code.size}</b></span><span>技能配置 <b>${sel.config?'✓':'—'}</b></span><span>约 <b>${fmt(bytes)}</b></span>`;
+  const need=[];if(!st.tools.git)need.push('git');if((sel.claude.size+sel.codex.size+sel.code.size)&&!st.tools.restic)need.push('restic');
+  let w='';if(need.length)w=`缺少 ${need.join(' ')}：brew install ${need.join(' ')}`;else if(mode==='push'&&!st.conf.AISYNC_GIT_REMOTE&&!st.conf.RESTIC_REPOSITORY)w='未配置云端，点右上角 ⚙ 设置';else if((sel.claude.size+sel.codex.size+sel.code.size)&&!st.conf.RESTIC_REPOSITORY)w='会话/代码需要 restic 仓库，去 ⚙ 设置';
+  $('#warn').textContent=w;$('#go').disabled=!!w||st.task.running;if(st.task.running&&!$('#log').classList.contains('show')){showLog(false);pollLog(0)}
+}
+async function go(){
+  const n=sel.claude.size+sel.codex.size, dirs=[...sel.code].map(p=>p.split(/[\\/]/).pop()).slice(0,5).join('、'), msg=mode==='push'?`把 ${n} 个会话、${sel.code.size} 个代码目录${dirs?'（'+dirs+(sel.code.size>5?'…':'')+'）':''}${sel.config?'和技能配置':''}上传到云端？`:`把 ${n} 个会话、${sel.code.size} 个代码目录${sel.config?'和技能配置':''}恢复到这台电脑？本机同名文件会被覆盖（配置层会先备份）。`;
+  if(!confirm(msg))return; const r=await api(mode==='push'?'/api/push':'/api/restore',payload()); if(r.error){alert(r.error);return}
+  showLog(false);pollLog(0);
+}
+async function setup(){const r=await api('/api/setup',{remote:$('#su-git').value.trim(),password:$('#su-pw').value});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
+async function pullCatalog(){if(!st.conf.AISYNC_GIT_REMOTE){openSettings();return}const r=await api('/api/restore',{config:true});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
+function showLog(autoHide){const el=$('#log');el.classList.add('show');el.innerHTML='<div class="bar"><b>日志</b><span class="st" id="log-st">运行中…</span><div class="pbar" id="lpw" hidden><i id="lbar"></i></div><span class="ptext" id="ltext"></span><span class="sp"></span>'+(st.platform==='darwin'?'<button onclick="api(\'/api/open-privacy\',{})" title="系统设置 → 隐私与安全性 → 完全磁盘访问权限">打开权限设置</button>':'')+'<button onclick="$(\'#log\').innerHTML=\'\'">清空</button><button onclick="hideLog()">关闭 ✕</button></div>';el.dataset.auto=autoHide?'1':''}
+function hideLog(){$('#log').classList.remove('show')}
+function fmtEta(s){if(s==null)return '';s=Math.round(s);return s<60?`剩余 ${s} 秒`:s<3600?`剩余 ${Math.round(s/60)} 分`:`剩余 ${(s/3600).toFixed(1)} 小时`}
+function renderProgress(p,running){const fp=$('#fprog');const lp=$('#lpw');
+  if(!p||!running){fp.hidden=true;if(lp)lp.hidden=true;const lt=$('#ltext');if(lt)lt.textContent='';$('#go').textContent=mode==='push'?'上云':'恢复到本机';return}
+  const txt=`${p.percent}%${p.total?` · ${fmt(p.done)} / ${fmt(p.total)}`:''}${p.files!=null&&p.total_files?` · ${p.files}/${p.total_files} 文件`:''}${p.eta?` · ${fmtEta(p.eta)}`:''}`;
+  fp.hidden=false;$('#fbar').style.width=p.percent+'%';$('#ftext').textContent=txt;
+  if(lp){lp.hidden=false;$('#lbar').style.width=p.percent+'%';$('#ltext').textContent=txt}
+  $('#go').textContent=(mode==='push'?'上云中 ':'恢复中 ')+p.percent+'%'}
+async function pollLog(since,done){
+  const r=await api('/api/log?since='+since); const el=$('#log'); if(!el.querySelector('.bar'))showLog(false);
+  r.lines.forEach(l=>{const d=document.createElement('div');d.textContent=l;if(l.startsWith('$ '))d.className='cmd';if(l.startsWith('✓'))d.className='ok';if(l.startsWith('✗')||l.startsWith('⚠'))d.className='err';el.appendChild(d)});el.scrollTop=el.scrollHeight;
+  const stEl=$('#log-st');
+  renderProgress(r.progress,r.running);
+  if(r.running){if(stEl)stEl.textContent=(r.name||'')+' 运行中…';setTimeout(()=>pollLog(r.n,done),700)}
+  else{if(stEl)stEl.textContent=r.ok===false?'失败':'完成';st=await api('/api/status');sum();done&&done();if(el.dataset.auto&&r.ok!==false)setTimeout(hideLog,4000)}
+}
+function toggleLog(){const el=$('#log');if(el.classList.contains('show'))hideLog();else{showLog(false);pollLog(0)}}
+function openSettings(){$('#s-git').value=st.conf.AISYNC_GIT_REMOTE||'';$('#s-restic').value=st.conf.RESTIC_REPOSITORY||'';$('#s-pass').value='';
+  $('#s-tools').innerHTML=Object.entries(st.tools).map(([k,v])=>`<span class="pill ${v?'ok':'warn'}">${k} ${v?'✓':'未安装'}</span>`).join('')+`<div class="hint" style="margin:8px 0 0">缺什么、怎么装、后端怎么配，见左侧「安装与配置」页。</div>`+`<span class="pill ${st.restic_pass?'ok':'warn'}">restic 密码 ${st.restic_pass?'已设':'未设'}</span>`;$('#settings').classList.add('show')}
+function closeSettings(){$('#settings').classList.remove('show')}
+async function saveSettings(){await api('/api/settings',{git_remote:$('#s-git').value.trim(),restic_repo:$('#s-restic').value.trim(),restic_pass:$('#s-pass').value});closeSettings();load()}
+load();
+</script></body></html>

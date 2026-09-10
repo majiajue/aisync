@@ -1,0 +1,16 @@
+.venv/
+build/
+dist/
+bundle/
+cache/
+stage/
+restored/
+repo/
+backup-*/
+__pycache__/
+aisync.conf
+.restic-pass
+selection.json
+icon.iconset/
+*.log
+aisync.spec
