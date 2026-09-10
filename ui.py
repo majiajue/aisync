@@ -170,7 +170,7 @@ def status():
     if (REPO / ".git").exists():
         r = subprocess.run(["git", "-C", str(REPO), "remote", "get-url", "origin"], capture_output=True, text=True)
         git_remote = r.stdout.strip() or None
-    snaps = core.snapshots()
+    snaps = []   # 快照列表改由 /api/snapshots 异步提供，避免每次打开都等 restic 联网
     remotes = []
     if which("rclone"):
         r = subprocess.run(["rclone", "listremotes"], capture_output=True, text=True, env=env_for_tools()); remotes = [x.strip(":") for x in r.stdout.split()]
@@ -200,6 +200,7 @@ class Task:
         for line in p.stdout: self.log(line.rstrip())
         if p.wait() != 0: raise RuntimeError(f"命令退出码 {p.returncode}")
 TASK = Task()
+_snap_cache = []
 
 def _hint_logger(L):
     seen = set()
@@ -327,6 +328,10 @@ class H(BaseHTTPRequestHandler):
             elif u.path == "/api/inventory": self._json(inventory())
             elif u.path == "/api/catalog": self._json(catalog() or {"missing": True})
             elif u.path == "/api/status": self._json(status())
+            elif u.path == "/api/snapshots":
+                now = time.time()
+                if not _snap_cache or now - _snap_cache[0] > 60: _snap_cache[:] = [now, core.snapshots()]
+                self._json(_snap_cache[1])
             elif u.path == "/api/selection": self._json(json.loads(SELECTION.read_text()) if SELECTION.exists() else {})
             elif u.path == "/api/log":
                 since = int(q.get("since", ["0"])[0]); self._json({"lines": TASK.lines[since:], "n": len(TASK.lines), **TASK.snapshot()})

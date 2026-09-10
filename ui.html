@@ -80,7 +80,7 @@ footer .sp{flex:1}footer .warn{color:var(--copper);font-size:13px}
 #log .bar b{color:#fff;font-weight:600}
 .pbar{height:6px;border-radius:3px;background:rgba(127,138,147,.25);overflow:hidden;min-width:160px;flex:1;max-width:360px}.pbar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s}
 #log .bar .pbar{background:#2C363E}#log .bar .pbar i{background:#5FB6D2}.ptext{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}#log .ptext{color:#DDE3DD}
-footer .prog{display:flex;align-items:center;gap:10px;flex:1}#log .bar .st{color:#8EC9DD}#log .bar .sp{flex:1}#log .bar button{background:#232D35;border:1px solid #3A454E;color:#E6EAE6;padding:3px 12px;font-size:12px}#log .bar button:hover{border-color:#8EC9DD}
+footer .prog{display:flex;align-items:center;gap:10px;flex:1}footer .prog[hidden]{display:none}#log .bar .st{color:#8EC9DD}#log .bar .sp{flex:1}#log .bar button{background:#232D35;border:1px solid #3A454E;color:#E6EAE6;padding:3px 12px;font-size:12px}#log .bar button:hover{border-color:#8EC9DD}
 #log .ok{color:#7FC27A}#log .err{color:#E08A5A}#log .cmd{color:#8EC9DD}#log div{color:#DDE3DD}#log div.ok{color:#7FC27A}#log div.err{color:#E08A5A}#log div.cmd{color:#8EC9DD}
 #log.show{display:block}
 /* modal */
@@ -143,6 +143,7 @@ async function load(){
   } else { data=await api('/api/catalog');
     if(data.missing){data=null} else { $('#host').textContent=`云端清单来自 ${data.meta.host} · ${data.meta.time.slice(0,16).replace('T',' ')}`;
       sel.claude=new Set(data.claude.flatMap(p=>p.sessions.map(s=>s.path))); sel.codex=new Set(data.codex.map(s=>s.path)); sel.code=new Set(data.code.map(c=>c.path)); }
+    st.snapshots=[]; api('/api/snapshots').then(r=>{if(Array.isArray(r)){st.snapshots=r;if(mode==='restore'&&tab==='sessions')render()}});
   }
   render();
 }
@@ -167,7 +168,7 @@ function groupsOf(){
   const g={};
   data.claude.forEach(p=>{const k=p.cwd||p.key;(g[k]??={cwd:k,items:[]}).items.push(...p.sessions.map(s=>({...s,src:'claude'})))});
   data.codex.forEach(s=>{const k=s.cwd||'(未知目录)';(g[k]??={cwd:k,items:[]}).items.push({...s,src:'codex'})});
-  return Object.values(g).map(x=>{x.items.sort((a,b)=>b.mtime-a.mtime);x.last=x.items[0].mtime;return x}).sort((a,b)=>b.last-a.last);
+  return Object.values(g).filter(x=>x.items.length).map(x=>{x.items.sort((a,b)=>b.mtime-a.mtime);x.last=x.items[0].mtime;return x}).sort((a,b)=>b.last-a.last);
 }
 function renderSessions(v){
   const q=(window._q||'').toLowerCase(); const groups=groupsOf();
@@ -361,5 +362,6 @@ function openSettings(){$('#s-git').value=st.conf.AISYNC_GIT_REMOTE||'';$('#s-re
   $('#s-tools').innerHTML=Object.entries(st.tools).map(([k,v])=>`<span class="pill ${v?'ok':'warn'}">${k} ${v?'✓':'未安装'}</span>`).join('')+`<div class="hint" style="margin:8px 0 0">缺什么、怎么装、后端怎么配，见左侧「安装与配置」页。</div>`+`<span class="pill ${st.restic_pass?'ok':'warn'}">restic 密码 ${st.restic_pass?'已设':'未设'}</span>`;$('#settings').classList.add('show')}
 function closeSettings(){$('#settings').classList.remove('show')}
 async function saveSettings(){await api('/api/settings',{git_remote:$('#s-git').value.trim(),restic_repo:$('#s-restic').value.trim(),restic_pass:$('#s-pass').value});closeSettings();load()}
+(()=>{const q=new URLSearchParams(location.search);if(q.get('mode')==='restore'){mode='restore';$('#m-push').classList.remove('on');$('#m-restore').classList.add('on');$('#go').textContent='恢复到本机'}if(q.get('tab')){tab=q.get('tab');document.querySelectorAll('nav button[id^=n-]').forEach(b=>b.classList.toggle('on',b.id==='n-'+tab))}})();
 load();
 </script></body></html>
