@@ -6,7 +6,7 @@
 
 Sync and migrate your Claude Code & Codex sessions, skills, memories, settings and project code across machines — like restoring a new phone from backup. Local-first, end-to-end encrypted, works with Google Drive / Cloudflare R2 / OneDrive / WebDAV / S3 / local disks. macOS · Windows · Linux.
 
-[![build](https://github.com/majiajue/aisync/actions/workflows/build.yml/badge.svg)](https://github.com/majiajue/aisync/actions) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![release](https://img.shields.io/github/v/release/majiajue/aisync)](https://github.com/majiajue/aisync/releases)
+[![build](https://github.com/majiajue/aisync/actions/workflows/build.yml/badge.svg)](https://github.com/majiajue/aisync/actions) [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE) [![release](https://img.shields.io/github/v/release/majiajue/aisync)](https://github.com/majiajue/aisync/releases)
 
 ## 为什么
 
@@ -104,3 +104,7 @@ git tag v0.1.0 && git push --tags
 
 命令行：mac/Linux 用 `./aisync <命令>`，Windows 用 `aisync.cmd <命令>`，都转到 `core.py`。
 数据目录固定为 `~/aisync/`（Windows 为 `%USERPROFILE%\aisync`），删掉应用不影响数据。
+
+## 协议
+
+AGPL-3.0。你可以自由使用、修改和分发；若你修改后再分发，或以网络服务形式向他人提供，须以同样协议公开源码。详见 [LICENSE](LICENSE)。
