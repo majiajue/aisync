@@ -269,24 +269,49 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
         if src.is_dir(): shutil.copytree(src, dst, dirs_exist_ok=True)
         else: shutil.copy2(src, dst)
         logger(f"✓ {dst}")
-    if old_home and old_home != str(HOME): cmd_remap(old_home, str(HOME), logger=logger)
-    for old_p, new_p in targets.items():   # 代码目录换了位置：把会话记录里的 cwd 也改过来，claude --resume / codex resume 才能对上
-        if old_home and old_p.startswith(old_home): old_p = str(HOME) + old_p[len(old_home):]
-        cmd_remap(old_p, new_p, logger=logger)
+    try:
+        if old_home and old_home != str(HOME): cmd_remap(old_home, str(HOME), logger=logger)
+        for old_p, new_p in targets.items():   # 代码目录换了位置：把会话记录里的 cwd 也改过来，claude --resume / codex resume 才能对上
+            op = _remap_home(old_p, old_home) if old_home else old_p
+            cmd_remap(old_p, new_p, logger=logger)
+            if op != old_p: cmd_remap(op, new_p, logger=logger)
+    except Exception as e:
+        logger(f"⚠ 路径重映射时出错（{e}），但文件已恢复到位；会话若在 Claude 里对不上目录，可重开一次 aisync 恢复")
     return pending
 
 def encode_project(path: str): return re.sub(r"[\\/:]", "-", path)
 
+def _merge_dir(src: Path, dst: Path):
+    """把 src 目录合并进 dst（dst 已存在时逐文件搬，冲突覆盖），最后删掉空的 src。"""
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in list(src.iterdir()):
+        target = dst / item.name
+        if item.is_dir(): _merge_dir(item, target)
+        else:
+            if target.exists(): target.unlink()
+            shutil.move(str(item), str(target))
+    try: src.rmdir()
+    except OSError: pass
+
 def cmd_remap(old, new, logger=log):
     old_enc, new_enc = encode_project(old), encode_project(new)
+    renamed = 0
     for d in list((CLAUDE / "projects").glob(f"{old_enc}*")) if (CLAUDE / "projects").exists() else []:
-        d.rename(d.parent / d.name.replace(old_enc, new_enc, 1))
+        nd = d.parent / d.name.replace(old_enc, new_enc, 1)
+        if nd == d: continue
+        try:
+            if nd.exists(): _merge_dir(d, nd)      # 目标已存在（比如重复恢复）：合并，不再崩溃
+            else: d.rename(nd)
+            renamed += 1
+        except Exception as e: logger(f"⚠ 项目目录 {d.name} 改名失败（{e}），跳过，不影响其它")
     n = 0
     for root in (CLAUDE / "projects", CODEX / "sessions"):
         for f in root.rglob("*.jsonl") if root.exists() else []:
-            s = f.read_text(encoding="utf-8", errors="ignore")
-            if old in s: f.write_text(s.replace(old, new), encoding="utf-8"); n += 1
-    logger(f"已把 {old} 重映射为 {new}（{n} 个会话文件）")
+            try:
+                s = f.read_text(encoding="utf-8", errors="ignore")
+                if old in s: f.write_text(s.replace(old, new), encoding="utf-8"); n += 1
+            except Exception: pass
+    logger(f"已把 {old} 重映射为 {new}（改名 {renamed} 个目录，改写 {n} 个会话文件）")
 
 # ---------------- 秘密打包：用 restic 密码加密后随 git 走 ----------------
 import hashlib, hmac, struct, secrets as _secrets
