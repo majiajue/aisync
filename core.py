@@ -219,7 +219,9 @@ def _restored_location(target: Path, original: str):
     if p.drive: cands.insert(0, target / p.drive.rstrip(":") / p.relative_to(p.anchor))
     return next((c for c in cands if c.exists()), None)
 
-def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=None):
+def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=None, targets=None):
+    """targets: {原路径: 新路径}，用于把代码目录恢复到自定义位置；会话里的 cwd 也会同步改写"""
+    targets = {k: v for k, v in (targets or {}).items() if v and v != k}
     """先还原到临时目录，再搬到原位（跨平台一致），返回未能自动就位的路径"""
     restic_ok()
     target = AISYNC / "restored" / time.strftime("%Y%m%d-%H%M%S"); target.mkdir(parents=True)
@@ -230,8 +232,8 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
     for p in paths:
         src = _restored_location(target, p)
         if not src: logger(f"⚠ 快照里没有 {p}"); continue
-        dst = Path(p)
-        if old_home and str(dst).startswith(old_home): dst = Path(str(HOME) + str(dst)[len(old_home):])
+        dst = Path(targets[p]) if p in targets else Path(p)
+        if p not in targets and old_home and str(dst).startswith(old_home): dst = Path(str(HOME) + str(dst)[len(old_home):])
         if str(src).startswith(str(STAGE)) or p.startswith(str(STAGE)):  # sqlite 留在 restored，需退出 Codex 后拷回
             pending.append(str(src)); continue
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -239,6 +241,9 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
         else: shutil.copy2(src, dst)
         logger(f"✓ {dst}")
     if old_home and old_home != str(HOME): cmd_remap(old_home, str(HOME), logger=logger)
+    for old_p, new_p in targets.items():   # 代码目录换了位置：把会话记录里的 cwd 也改过来，claude --resume / codex resume 才能对上
+        if old_home and old_p.startswith(old_home): old_p = str(HOME) + old_p[len(old_home):]
+        cmd_remap(old_p, new_p, logger=logger)
     return pending
 
 def encode_project(path: str): return re.sub(r"[\\/:]", "-", path)

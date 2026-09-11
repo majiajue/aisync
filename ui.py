@@ -255,7 +255,7 @@ def do_restore(sel):
     if sel.get("sqlite"): paths.append(str(STAGE))
     if paths:
         L(f"② 从快照 {sel.get('snapshot') or 'latest'} 恢复 {len(paths)} 个路径")
-        pending = core.cmd_restore(paths, sel.get("snapshot") or "latest", old_home=old_home, logger=L, progress=TASK.set_progress)
+        pending = core.cmd_restore(paths, sel.get("snapshot") or "latest", old_home=old_home, logger=L, progress=TASK.set_progress, targets=sel.get("code_targets") or {})
         for p in pending: L(f"⚠ 请退出 Codex 后把 {p} 里的 sqlite 拷回 ~/.codex/")
     L("③ 体检"); core.cmd_doctor(logger=L)
 

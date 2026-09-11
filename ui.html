@@ -123,7 +123,7 @@ footer .prog{display:flex;align-items:center;gap:10px;flex:1}footer .prog[hidden
 </div></div>
 <script>
 let mode='push', tab='sessions', data=null, st=null, snapshot='';
-const sel={claude:new Set(), codex:new Set(), code:new Set(), config:true, history:true, sqlite:true, autoCode:true};
+const sel={claude:new Set(), codex:new Set(), code:new Set(), config:true, history:true, sqlite:true, autoCode:true, codeTargets:{}};
 const $=s=>document.querySelector(s);
 const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(0)+' K':b<1073741824?(b/1048576).toFixed(1)+' M':(b/1073741824).toFixed(2)+' G';
 const dt=(s,m)=>{const d=s?new Date(s):new Date(m*1000);return isNaN(d)?'':d.toISOString().slice(0,10)};
@@ -190,14 +190,25 @@ function renderSessions(v){
   v.innerHTML=h; v.querySelectorAll('[data-ind]').forEach(c=>c.indeterminate=true);
   if(!groups.length) v.innerHTML+=`<div class="empty">没有会话</div>`;
 }
+const SEP=()=>st.platform==='win32'?'\\':'/';
+const base=p=>p.split(/[\\/]/).filter(Boolean).pop()||p;
+function defaultTarget(p){const oh=(data.meta&&data.meta.home)||'';if(oh&&p.startsWith(oh))return st.home+p.slice(oh.length).replace(/[\\/]/g,SEP());return p}
+function targetOf(p){return sel.codeTargets[p]||defaultTarget(p)}
+function setTarget(p,v){if(v&&v!==defaultTarget(p))sel.codeTargets[p]=v;else delete sel.codeTargets[p];sum()}
+function applyRoot(){const r=($('#code-root').value||'').trim().replace(/[\\/]+$/,'');if(!r)return;data.code.forEach(c=>{if(sel.code.has(c.path))sel.codeTargets[c.path]=r+SEP()+base(c.path)});renderCode($('#view'));sum()}
+function resetTargets(){sel.codeTargets={};renderCode($('#view'));sum()}
 function renderCode(v){
-  let h=`<p class="hint">${mode==='push'?'这些是会话里出现过的项目目录。勾选后整个目录（排除 node_modules、.git、构建产物）会随会话一起进入加密快照，新电脑上恢复到同一路径。已经在 git 远端的项目可以不选，用 git clone 更省空间。':'勾选要恢复到本机的代码目录。会原路恢复，如果用户名不同会自动重映射。'}</p><div class="code">`;
+  let h=`<p class="hint">${mode==='push'?'这些是会话里出现过的项目目录。勾选后整个目录（排除 node_modules、.git、构建产物）会随会话一起进入加密快照，新电脑上恢复到同一路径。已经在 git 远端的项目可以不选，用 git clone 更省空间。':'勾选要恢复到本机的代码目录。默认恢复到原路径（用户名不同会自动换成本机 home）；也可以逐个改「恢复到」，或用下面的根目录一键放到统一位置。会话里的项目路径会同步改写，恢复后到新目录 claude --resume 即可。'}</p>`;
+  if(mode==='restore'){h+=`<div class="toolbar" style="position:static"><input type="text" id="code-root" placeholder="${st.platform==='win32'?'D:\\\\code':'~/code'}  统一恢复到这个根目录下（保留各自目录名）" value="${esc(window._codeRoot||'')}" oninput="window._codeRoot=this.value"><button onclick="applyRoot()">应用到已勾选</button><button onclick="resetTargets()">恢复默认路径</button></div>`}
+  h+=`<div class="code">`;
   for(const c of data.code){
-    h+=`<label class="row"><input type="checkbox" ${sel.code.has(c.path)?'checked':''} ${mode==='push'&&!c.exists?'disabled':''} onchange="tog('code','${esc(c.path)}',this.checked)">
-      <span class="t mono" title="${esc(c.path)}">${esc(c.path)}</span>
+    const on=sel.code.has(c.path), tgt=targetOf(c.path), changed=tgt!==c.path;
+    h+=`<label class="row"><input type="checkbox" ${on?'checked':''} ${mode==='push'&&!c.exists?'disabled':''} onchange="tog('code','${esc(c.path)}',this.checked);renderCode($('#view'))">
+      <span class="t mono" title="${esc(c.path)}">${esc(c.path)}${mode==='restore'&&changed?`<br><span style="color:var(--accent)">→ ${esc(tgt)}</span>`:''}</span>
       <span class="d">${c.claude?`claude ${c.claude}`:''} ${c.codex?`codex ${c.codex}`:''}</span>
       <span>${c.git?'<span class="pill ok">git</span>':''}</span><span>${mode==='push'&&!c.exists?'<span class="pill warn">目录不存在</span>':''}</span>
-      <span class="s">${c.size==null?"计算中…":fmt(c.size)+(c.size_truncated?"+":"")}</span></label>`;
+      <span class="s">${c.size==null?'计算中…':fmt(c.size)+(c.size_truncated?'+':'')}</span></label>`;
+    if(mode==='restore'&&on) h+=`<div class="row" style="grid-template-columns:28px 1fr;padding-top:0"><span></span><div style="display:flex;gap:8px;align-items:center"><span class="d">恢复到</span><input type="text" class="mono" value="${esc(tgt)}" onchange="setTarget('${esc(c.path)}',this.value.trim());renderCode($('#view'))" style="max-width:640px"></div></div>`;
   }
   v.innerHTML=h+'</div>'+(data.code.length?'':'<div class="empty">没有代码目录</div>');
 }
@@ -323,7 +334,7 @@ function tog(src,p,on){on?sel[src].add(p):sel[src].delete(p);if(src!=='code')aut
 function grp(cb,items){items.forEach(([s,p])=>{cb.checked?sel[s].add(p):sel[s].delete(p);autoCode(s,p,cb.checked)});renderSessions($('#view'));sum();persist()}
 function bulk(on){const q=(window._q||'').toLowerCase();groupsOf().forEach(g=>g.items.forEach(s=>{if(!q||s.title.toLowerCase().includes(q)||g.cwd.toLowerCase().includes(q))on?sel[s.src].add(s.path):sel[s.src].delete(s.path)}));renderSessions($('#view'));sum();persist()}
 function recent(d){const c=Date.now()/1000-d*86400;sel.claude.clear();sel.codex.clear();data.claude.forEach(p=>p.sessions.forEach(s=>{if(s.mtime>c)sel.claude.add(s.path)}));data.codex.forEach(s=>{if(s.mtime>c)sel.codex.add(s.path)});renderSessions($('#view'));sum();persist()}
-function payload(){return {claude_sessions:[...sel.claude],codex_sessions:[...sel.codex],code:[...sel.code],config:sel.config,include_history:sel.history,include_sqlite:sel.sqlite,sqlite:sel.sqlite,snapshot:snapshot}}
+function payload(){return {code_targets:Object.fromEntries(Object.entries(sel.codeTargets).filter(([k,v])=>v&&sel.code.has(k))),claude_sessions:[...sel.claude],codex_sessions:[...sel.codex],code:[...sel.code],config:sel.config,include_history:sel.history,include_sqlite:sel.sqlite,sqlite:sel.sqlite,snapshot:snapshot}}
 let _pt;function persist(){if(mode!=='push')return;clearTimeout(_pt);_pt=setTimeout(()=>api('/api/selection',payload()),400)}
 function sum(){
   if(!data){$('#sum').innerHTML='';$('#go').disabled=true;return}
@@ -334,7 +345,7 @@ function sum(){
   $('#warn').textContent=w;$('#go').disabled=!!w||st.task.running;if(st.task.running&&!$('#log').classList.contains('show')){showLog(false);pollLog(0)}
 }
 async function go(){
-  const n=sel.claude.size+sel.codex.size, dirs=[...sel.code].map(p=>p.split(/[\\/]/).pop()).slice(0,5).join('、'), msg=mode==='push'?`把 ${n} 个会话、${sel.code.size} 个代码目录${dirs?'（'+dirs+(sel.code.size>5?'…':'')+'）':''}${sel.config?'和技能配置':''}上传到云端？`:`把 ${n} 个会话、${sel.code.size} 个代码目录${sel.config?'和技能配置':''}恢复到这台电脑？本机同名文件会被覆盖（配置层会先备份）。`;
+  const n=sel.claude.size+sel.codex.size, dirs=[...sel.code].map(p=>p.split(/[\\/]/).pop()).slice(0,5).join('、'), msg=mode==='push'?`把 ${n} 个会话、${sel.code.size} 个代码目录${dirs?'（'+dirs+(sel.code.size>5?'…':'')+'）':''}${sel.config?'和技能配置':''}上传到云端？`:`把 ${n} 个会话、${sel.code.size} 个代码目录${sel.config?'和技能配置':''}恢复到这台电脑？${Object.keys(payload().code_targets).length?'其中 '+Object.keys(payload().code_targets).length+' 个代码目录恢复到自定义路径。':''}本机同名文件会被覆盖（配置层会先备份）。`;
   if(!confirm(msg))return; const r=await api(mode==='push'?'/api/push':'/api/restore',payload()); if(r.error){alert(r.error);return}
   showLog(false);pollLog(0);
 }
