@@ -23,6 +23,20 @@ L2_SQLITE = ["thread_history_1.sqlite", "memories_1.sqlite", "state_5.sqlite", "
 SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", "target", "dist", "build", ".next"}
 SECRET = re.compile(r"(key|token|secret|password|passwd)", re.I)
 
+# Windows: 隐藏子进程（git/rclone/restic）弹出的黑色 cmd 窗口 —— 全局给 subprocess 打补丁
+if IS_WIN:
+    import subprocess as _sp
+    _CREATE_NO_WINDOW = 0x08000000
+    _orig_popen = _sp.Popen
+    class _Popen(_orig_popen):
+        def __init__(self, *a, **k):
+            k.setdefault("creationflags", 0); k["creationflags"] |= _CREATE_NO_WINDOW
+            si = k.get("startupinfo") or _sp.STARTUPINFO()
+            si.dwFlags |= _sp.STARTF_USESHOWWINDOW; si.wShowWindow = 0  # SW_HIDE
+            k["startupinfo"] = si
+            super().__init__(*a, **k)
+    _sp.Popen = _Popen   # subprocess.run/check_output 内部都走 Popen，一处覆盖全部生效
+
 def log(*a): print("[aisync]", *a, flush=True)
 def which(x): return shutil.which(x) is not None
 def hostname(): return platform.node().split(".")[0]
