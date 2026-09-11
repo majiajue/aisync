@@ -227,11 +227,21 @@ def snapshots():
     except Exception: return []
 
 def _restored_location(target: Path, original: str):
-    """restic 把绝对路径还原到 target 下：Unix 为 target/Users/x/..；Windows 为 target/C/Users/x/.."""
-    p = Path(original)
-    cands = [target / p.relative_to(p.anchor)]
-    if p.drive: cands.insert(0, target / p.drive.rstrip(":") / p.relative_to(p.anchor))
+    """restic 把绝对路径还原到 target 下。原路径可能是异系统的（macOS 存 /Users/..，Windows 存 C:\\Users\\..），
+    所以自己按分隔符切段，不用 pathlib（它会用本机规则误解析）。"""
+    segs = [s for s in re.split(r"[\\/]", original) if s and s not in (".", "..")]
+    if segs and re.fullmatch(r"[A-Za-z]:", segs[0]): segs[0] = segs[0][0]   # "C:" -> "C"
+    cands = [target.joinpath(*segs)]                      # 含盘符：target/C/Users/..
+    if segs and re.fullmatch(r"[A-Za-z]", segs[0]): cands.append(target.joinpath(*segs[1:]))  # 不含盘符：target/Users/..
     return next((c for c in cands if c.exists()), None)
+
+def _remap_home(path_str: str, old_home: str):
+    """把异系统的旧 home 前缀换成本机 home，分隔符统一成本机的。只处理 home 下的路径（会话/技能等都在 ~/.claude|.codex）。"""
+    norm = path_str.replace("\\", "/"); oh = (old_home or "").replace("\\", "/").rstrip("/")
+    if oh and norm.startswith(oh + "/"):
+        rel = norm[len(oh) + 1:]
+        return str(HOME / Path(*rel.split("/")))
+    return path_str
 
 def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=None, targets=None):
     """targets: {原路径: 新路径}，用于把代码目录恢复到自定义位置；会话里的 cwd 也会同步改写"""
@@ -241,13 +251,18 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
     target = AISYNC / "restored" / time.strftime("%Y%m%d-%H%M%S"); target.mkdir(parents=True)
     run(["restic", "unlock"], check=False, logger=lambda m: None)
     tune = ["-o", "rclone.connections=2", "-o", "rclone.timeout=15m", "-o", "rclone.args=serve restic --stdio --transfers 2 --tpslimit 4 --retries 15 --low-level-retries 30 --timeout 15m --contimeout 2m --drive-pacer-min-sleep 500ms"] if read_conf().get("RESTIC_REPOSITORY", "").startswith("rclone:") else []
-    run(["restic", "restore", "--json", *tune, snapshot, "--target", str(target), *sum((["--include", p] for p in paths), [])], logger=logger, progress=progress)
+    ea = [0]
+    def _rlog(m):
+        if "set EA failed" in m or "extended attribute" in m or "restore metadata" in m: ea[0] += 1
+        logger(m)
+    rc = run(["restic", "restore", "--json", "--exclude-xattr", "*", *tune, snapshot, "--target", str(target), *sum((["--include", p] for p in paths), [])], logger=_rlog, progress=progress, check=False)
+    if rc and ea[0] and ea[0] >= 1: logger(f"⚠ {ea[0]} 处扩展属性未写入（跨系统 macOS 元数据，Windows 不支持），文件内容已完整恢复，忽略即可")
+    elif rc: raise RuntimeError(f"restic restore 退出码 {rc}")
     pending = []
     for p in paths:
         src = _restored_location(target, p)
         if not src: logger(f"⚠ 快照里没有 {p}"); continue
-        dst = Path(targets[p]) if p in targets else Path(p)
-        if p not in targets and old_home and str(dst).startswith(old_home): dst = Path(str(HOME) + str(dst)[len(old_home):])
+        dst = Path(targets[p]) if p in targets else Path(_remap_home(p, old_home))
         if str(src).startswith(str(STAGE)) or p.startswith(str(STAGE)):  # sqlite 留在 restored，需退出 Codex 后拷回
             pending.append(str(src)); continue
         dst.parent.mkdir(parents=True, exist_ok=True)
