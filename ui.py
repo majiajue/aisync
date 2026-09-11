@@ -174,7 +174,7 @@ def status():
     remotes = []
     if which("rclone"):
         r = subprocess.run(["rclone", "listremotes"], capture_output=True, text=True, env=env_for_tools()); remotes = [x.strip(":") for x in r.stdout.split()]
-    return {"conf": {k: v for k, v in conf.items() if k != "RESTIC_PASSWORD"}, "git_remote": git_remote, "platform": sys.platform, "rclone_remotes": remotes,
+    return {"conf": {k: v for k, v in conf.items() if k != "RESTIC_PASSWORD"}, "git_remote": git_remote, "platform": sys.platform, "home": str(core.HOME), "user": os.environ.get("USER") or os.environ.get("USERNAME"), "rclone_remotes": remotes,
             "tools": {t: which(t) for t in ("git", "restic", "rclone", "claude", "codex", "node", "gh")},
             "restic_pass": Path(conf.get("RESTIC_PASSWORD_FILE", AISYNC / ".restic-pass")).exists(),
             "snapshots": snaps[-10:], "catalog": (catalog() or {}).get("meta"), "task": TASK.snapshot()}

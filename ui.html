@@ -183,7 +183,7 @@ function renderSessions(v){
   let h=`<div class="toolbar"><input type="text" placeholder="搜索标题或目录…" value="${esc(window._q||'')}" oninput="window._q=this.value;renderSessions(document.querySelector('#view'))"><span class="sp"></span>
     <label class="codechip ${sel.autoCode?'on':''}" style="margin:0"><input type="checkbox" ${sel.autoCode?'checked':''} onchange="sel.autoCode=this.checked;renderSessions($('#view'))">勾会话时自动带上代码目录</label><button onclick="bulk(true)">全选可见</button><button onclick="bulk(false)">清空可见</button>${mode==='push'?'<button onclick="recent(30)">最近 30 天</button><button onclick="recent(90)">最近 90 天</button>':''}</div>
     <p class="hint">${mode==='push'?'勾选要上云的会话。按项目目录分组，标题取自会话名或第一句提问。':'勾选要恢复到这台电脑的会话。恢复后在对应目录里运行 claude --resume 或 codex resume 即可继续。'}</p>`;
-  if(mode==='restore'){h+=`<p class="hint">恢复版本在右上角「版本」下拉选择${st.snapshots.length?'':'（连接云端后可选具体时间点）'}。要把代码目录放到本机的其它盘或目录，去左侧「代码」页逐个改路径或统一设根目录。</p>`}
+  if(mode==='restore'){h+=`<p class="hint">恢复版本在右上角「版本」下拉选择${st.snapshots.length?'':'（连接云端后可选具体时间点）'}。勾选了代码目录的项目，下面会出现「代码目录恢复到」，可直接改到本机想放的盘或目录；也可到左侧「代码」页统一设根目录。</p>`}
   for(const g of groups){
     const items=g.items.filter(s=>!q||s.title.toLowerCase().includes(q)||g.cwd.toLowerCase().includes(q)); if(!items.length)continue;
     const nSel=items.filter(s=>sel[s.src].has(s.path)).length, all=nSel===items.length, some=nSel>0&&!all;
@@ -192,6 +192,8 @@ function renderSessions(v){
       <input type="checkbox" ${all?'checked':''} ${some?'data-ind=1':''} onclick="event.stopPropagation();grp(this,${JSON.stringify(items.map(s=>[s.src,s.path]))})">
       <span class="tw">▶</span><span class="title">${esc(g.cwd.split(/[\\/]/).slice(-1)[0]||g.cwd)}</span><span class="path mono">${esc(g.cwd)}</span>${codeChip(g.cwd)}
       <span class="n">${nSel}/${items.length} · ${fmt(items.reduce((a,s)=>a+s.size,0))}</span></div><div class="rows">`;
+    const gc=mode==='restore'&&codeOf(g.cwd)&&sel.code.has(g.cwd);   // 该项目代码目录被选中：直接在会话组里给出恢复路径
+    if(gc){const tgt=targetOf(g.cwd),changed=tgt!==g.cwd;h+=`<div class="row" style="grid-template-columns:28px auto 1fr;background:var(--bg2)"><span></span><span class="d" style="white-space:nowrap">代码目录恢复到</span><input type="text" class="mono" value="${esc(tgt)}" onchange="setTarget('${esc(g.cwd)}',this.value.trim());renderSessions($('#view'))" title="改成本机想放的位置，如 D:\\code\\football${changed?'':''}"></div>`}
     for(const s of items) h+=`<label class="row"><input type="checkbox" ${sel[s.src].has(s.path)?'checked':''} onchange="tog('${s.src}','${esc(s.path)}',this.checked);renderSessions($('#view'))"><span class="t" title="${esc(s.title)}">${esc(s.title)}</span><span class="pill ${s.src}">${s.src}</span><span class="d">${dt(s.ts,s.mtime)}</span><span class="s">${fmt(s.size)}</span></label>`;
     h+=`</div></div>`;
   }
