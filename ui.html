@@ -81,7 +81,7 @@ footer .sp{flex:1}footer .warn{color:var(--copper);font-size:13px}
 .pbar{height:6px;border-radius:3px;background:rgba(127,138,147,.25);overflow:hidden;min-width:160px;flex:1;max-width:360px}.pbar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s}
 #log .bar .pbar{background:#2C363E}#log .bar .pbar i{background:#5FB6D2}.ptext{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}#log .ptext{color:#DDE3DD}
 footer .prog{display:flex;align-items:center;gap:10px;flex:1}footer .prog[hidden]{display:none}#log .bar .st{color:#8EC9DD}#log .bar .sp{flex:1}#log .bar button{background:#232D35;border:1px solid #3A454E;color:#E6EAE6;padding:3px 12px;font-size:12px}#log .bar button:hover{border-color:#8EC9DD}
-#log .ok{color:#7FC27A}#log .err{color:#E08A5A}#log .cmd{color:#8EC9DD}#log div{color:#DDE3DD}#log div.ok{color:#7FC27A}#log div.err{color:#E08A5A}#log div.cmd{color:#8EC9DD}
+#log .ok{color:#7FC27A}#log .err{color:#E08A5A}#log .cmd{color:#8EC9DD}#log{user-select:text}#log div{color:#DDE3DD;user-select:text;-webkit-user-select:text}#log div.ok{color:#7FC27A}#log div.err{color:#E08A5A}#log div.cmd{color:#8EC9DD}
 #log.show{display:block}
 /* modal */
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:10}
@@ -351,8 +351,12 @@ async function go(){
 }
 async function setup(){const r=await api('/api/setup',{remote:$('#su-git').value.trim(),password:$('#su-pw').value});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
 async function pullCatalog(){if(!st.conf.AISYNC_GIT_REMOTE){openSettings();return}const r=await api('/api/restore',{config:true});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
-function showLog(autoHide){const el=$('#log');el.classList.add('show');el.innerHTML='<div class="bar"><b>日志</b><span class="st" id="log-st">运行中…</span><div class="pbar" id="lpw" hidden><i id="lbar"></i></div><span class="ptext" id="ltext"></span><span class="sp"></span>'+(st.platform==='darwin'?'<button onclick="api(\'/api/open-privacy\',{})" title="系统设置 → 隐私与安全性 → 完全磁盘访问权限">打开权限设置</button>':'')+'<button onclick="$(\'#log\').innerHTML=\'\'">清空</button><button onclick="hideLog()">关闭 ✕</button></div>';el.dataset.auto=autoHide?'1':''}
+function showLog(autoHide){const el=$('#log');el.classList.add('show');el.innerHTML='<div class="bar"><b>日志</b><span class="st" id="log-st">运行中…</span><div class="pbar" id="lpw" hidden><i id="lbar"></i></div><span class="ptext" id="ltext"></span><span class="sp"></span>'+(st.platform==='darwin'?'<button onclick="api(\'/api/open-privacy\',{})" title="系统设置 → 隐私与安全性 → 完全磁盘访问权限">打开权限设置</button>':'')+'<button onclick="copyLog(this)">复制全部</button><button onclick="$(\'#log\').innerHTML=\'\'">清空</button><button onclick="hideLog()">关闭 ✕</button></div>';el.dataset.auto=autoHide?'1':''}
 function hideLog(){$('#log').classList.remove('show')}
+async function copyLog(btn){
+  const t=[...document.querySelectorAll('#log > div:not(.bar)')].map(d=>d.textContent).join(String.fromCharCode(10));
+  try{await navigator.clipboard.writeText(t)}catch(e){const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(_){}document.body.removeChild(ta)}
+  const o=btn.textContent;btn.textContent='已复制';setTimeout(()=>btn.textContent=o,1500)}
 function fmtEta(s){if(s==null)return '';s=Math.round(s);return s<60?`剩余 ${s} 秒`:s<3600?`剩余 ${Math.round(s/60)} 分`:`剩余 ${(s/3600).toFixed(1)} 小时`}
 function renderProgress(p,running){const fp=$('#fprog');const lp=$('#lpw');
   if(!p||!running){fp.hidden=true;if(lp)lp.hidden=true;const lt=$('#ltext');if(lt)lt.textContent='';$('#go').textContent=mode==='push'?'上云':'恢复到本机';return}
