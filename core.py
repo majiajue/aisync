@@ -119,8 +119,8 @@ def stage_l1(logger=log):
         "updated": time.strftime("%Y-%m-%dT%H:%M:%S"), "claude_version": ver("claude"), "codex_version": ver("codex"),
         "claude_projects": sorted(x.name for x in (CLAUDE / "projects").iterdir()) if (CLAUDE / "projects").exists() else []},
         indent=1, ensure_ascii=False), encoding="utf-8")
-    if not (REPO / ".gitattributes").exists(): (REPO / ".gitattributes").write_text("* text=auto\n")
-    if not (REPO / ".gitignore").exists(): (REPO / ".gitignore").write_text("auth.json\n*.sqlite*\n")
+    if not (REPO / ".gitattributes").exists(): (REPO / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+    if not (REPO / ".gitignore").exists(): (REPO / ".gitignore").write_text("auth.json\n*.sqlite*\n", encoding="utf-8")
 
 def git(*args, cwd=REPO, check=True, capture=True, logger=log): return run(["git", *args], cwd=str(cwd), check=check, capture=capture, logger=logger)
 

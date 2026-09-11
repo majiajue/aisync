@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """aisync 桌面壳：原生窗口 + 内置 HTTP 后端 + 自带 restic（macOS / Windows / Linux）"""
 import os, sys, threading, socket
+os.environ.setdefault("PYTHONUTF8", "1"); os.environ.setdefault("PYTHONIOENCODING", "utf-8")   # Windows 默认 GBK，子进程（git/restic 输出）也统一 UTF-8
 from pathlib import Path
 
 RES = Path(sys._MEIPASS) / "res" if hasattr(sys, "_MEIPASS") else Path(__file__).parent   # 打包后资源在 res/

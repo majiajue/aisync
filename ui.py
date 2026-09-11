@@ -28,7 +28,7 @@ which = core.which
 
 # ---------------- 会话元数据 ----------------
 _meta_cache_path = CACHE / "meta.json"
-try: _meta = json.loads(_meta_cache_path.read_text())
+try: _meta = json.loads(_meta_cache_path.read_text(encoding="utf-8"))
 except Exception: _meta = {}
 
 def _first_lines(p, n=6000):
@@ -59,7 +59,7 @@ def codex_index():
     idx = {}
     f = CODEX / "session_index.jsonl"
     if f.exists():
-        for line in f.read_text().splitlines():
+        for line in f.read_text(encoding="utf-8").splitlines():
             try: d = json.loads(line); idx[d["id"]] = d.get("thread_name")
             except Exception: pass
     return idx
@@ -89,7 +89,7 @@ def codex_session_meta(p: Path, idx):
     _meta[key] = m; return m
 
 _dirsize_path = CACHE / "dirsize.json"
-try: _dirsize = json.loads(_dirsize_path.read_text())
+try: _dirsize = json.loads(_dirsize_path.read_text(encoding="utf-8"))
 except Exception: _dirsize = {}
 _dirsize_lock = threading.Lock(); _dirsize_busy = set()
 
@@ -115,7 +115,7 @@ def dir_size(p: Path):
         sz, tr = _walk_size(p)
         with _dirsize_lock:
             _dirsize[k] = {"size": sz, "trunc": tr}; _dirsize_busy.discard(k)
-            _dirsize_path.write_text(json.dumps(_dirsize))
+            _dirsize_path.write_text(json.dumps(_dirsize), encoding="utf-8")
     threading.Thread(target=go, daemon=True).start()
     return None, False
 
@@ -154,14 +154,14 @@ def inventory():
         "codex_memories": sum(1 for _ in (CODEX / "memories").rglob("*.md")) if (CODEX / "memories").exists() else 0,
         "claude_memories": sum(1 for pj in claude if pj["has_memory"]),
     }
-    _meta_cache_path.write_text(json.dumps(_meta))
+    _meta_cache_path.write_text(json.dumps(_meta), encoding="utf-8")
     return {"host": platform.node(), "user": os.environ.get("USER") or os.environ.get("USERNAME"), "home": str(HOME),
             "claude": claude, "codex": codex, "code": code, "skills": skills}
 
 # ---------------- 云端清单 ----------------
 def catalog():
     f = REPO / "catalog.json"
-    if f.exists(): return json.loads(f.read_text())
+    if f.exists(): return json.loads(f.read_text(encoding="utf-8"))
     return None
 
 def status():
@@ -242,7 +242,7 @@ def build_catalog(chosen, snap_id=None):
            "code": [c for c in inv["code"] if c["path"] in chosen], "skills": inv["skills"]}
     cat["claude"] = [pj for pj in cat["claude"] if pj["sessions"] or pj["has_memory"]]
     REPO.mkdir(parents=True, exist_ok=True)
-    (REPO / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, indent=1))
+    (REPO / "catalog.json").write_text(json.dumps(cat, ensure_ascii=False, indent=1), encoding="utf-8")
     return cat
 
 def do_restore(sel):
@@ -314,7 +314,7 @@ def do_git_test(remote):
     L("✓ 能访问（空仓库也会显示为成功）。若报 Permission denied，见指南里的 SSH / Token 配置")
 
 # ---------------- HTTP ----------------
-HTML = (RES / "ui.html").read_text()
+HTML = (RES / "ui.html").read_text(encoding="utf-8")
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -332,7 +332,7 @@ class H(BaseHTTPRequestHandler):
                 now = time.time()
                 if not _snap_cache or now - _snap_cache[0] > 60: _snap_cache[:] = [now, core.snapshots()]
                 self._json(_snap_cache[1])
-            elif u.path == "/api/selection": self._json(json.loads(SELECTION.read_text()) if SELECTION.exists() else {})
+            elif u.path == "/api/selection": self._json(json.loads(SELECTION.read_text(encoding="utf-8")) if SELECTION.exists() else {})
             elif u.path == "/api/log":
                 since = int(q.get("since", ["0"])[0]); self._json({"lines": TASK.lines[since:], "n": len(TASK.lines), **TASK.snapshot()})
             else: self._json({"error": "not found"}, 404)
@@ -340,11 +340,11 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path); body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0) or 0)) or b"{}")
         try:
-            if u.path == "/api/selection": SELECTION.write_text(json.dumps(body, ensure_ascii=False)); self._json({"ok": True})
+            if u.path == "/api/selection": SELECTION.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8"); self._json({"ok": True})
             elif u.path == "/api/settings":
                 write_conf({"AISYNC_GIT_REMOTE": body.get("git_remote"), "RESTIC_REPOSITORY": body.get("restic_repo")})
                 if body.get("restic_pass"):
-                    pf = AISYNC / ".restic-pass"; pf.write_text(body["restic_pass"]); pf.chmod(0o600)
+                    pf = AISYNC / ".restic-pass"; pf.write_text(body["restic_pass"], encoding="utf-8"); pf.chmod(0o600)
                 core.cmd_init(logger=lambda *a: None)
                 self._json({"ok": True})
             elif u.path == "/api/open-privacy":
@@ -362,7 +362,7 @@ class H(BaseHTTPRequestHandler):
             elif u.path == "/api/setup":   # 新电脑：git 远端 + 密码 → 克隆、解密秘密、写回配置
                 remote, pw = body["remote"].strip(), body["password"]
                 if not remote or not pw: raise RuntimeError("git 远端和密码都要填")
-                pf = AISYNC / ".restic-pass"; pf.write_text(pw); os.chmod(pf, 0o600)
+                pf = AISYNC / ".restic-pass"; pf.write_text(pw, encoding="utf-8"); os.chmod(pf, 0o600)
                 write_conf({"AISYNC_GIT_REMOTE": remote, "RESTIC_PASSWORD_FILE": str(pf)})
                 def setup():
                     core.cmd_pull(logger=TASK.log)
@@ -370,8 +370,8 @@ class H(BaseHTTPRequestHandler):
                     core.cmd_doctor(logger=TASK.log)
                 TASK.run("setup", setup); self._json({"ok": True})
             elif u.path == "/api/restic-pass":
-                pf = AISYNC / ".restic-pass"; pf.write_text(body["password"]); os.chmod(pf, 0o600); write_conf({"RESTIC_PASSWORD_FILE": str(pf)}); self._json({"ok": True})
-            elif u.path == "/api/push": SELECTION.write_text(json.dumps(body, ensure_ascii=False)); TASK.run("push", lambda: do_push(body)); self._json({"ok": True})
+                pf = AISYNC / ".restic-pass"; pf.write_text(body["password"], encoding="utf-8"); os.chmod(pf, 0o600); write_conf({"RESTIC_PASSWORD_FILE": str(pf)}); self._json({"ok": True})
+            elif u.path == "/api/push": SELECTION.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8"); TASK.run("push", lambda: do_push(body)); self._json({"ok": True})
             elif u.path == "/api/restore": TASK.run("restore", lambda: do_restore(body)); self._json({"ok": True})
             else: self._json({"error": "not found"}, 404)
         except Exception as e: self._json({"error": str(e)}, 500)
