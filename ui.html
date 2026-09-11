@@ -21,7 +21,7 @@ header .brand{font-weight:700;font-size:16px;letter-spacing:.02em}
 .modes{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .modes button{border:0;border-radius:0;padding:7px 18px;background:transparent}
 .modes button.on{background:var(--accent);color:var(--accent-ink)}
-header .host{margin-left:auto;color:var(--mute);font-size:12.5px}
+header .host{margin-left:auto;color:var(--mute);font-size:12.5px}header #snapwrap select{background:var(--bg3);color:var(--ink);border:1px solid var(--line);border-radius:6px}
 /* body */
 main{flex:1;display:grid;grid-template-columns:200px 1fr;min-height:0}
 nav{border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;gap:4px;background:var(--bg2)}
@@ -93,7 +93,7 @@ footer .prog{display:flex;align-items:center;gap:10px;flex:1}footer .prog[hidden
 <header>
   <span class="brand">aisync</span>
   <div class="modes"><button id="m-push" class="on" onclick="setMode('push')">同步上云</button><button id="m-restore" onclick="setMode('restore')">从云恢复</button></div>
-  <span class="host" id="host"></span>
+  <span class="host" id="host"></span><span id="snapwrap" hidden style="display:flex;align-items:center;gap:6px;color:var(--mute);font-size:12.5px"><span>版本</span><select id="snapsel" style="width:auto;padding:4px 8px" onchange="snapshot=this.value"></select></span>
   <button class="ghost" onclick="openSettings()">⚙ 设置</button>
 </header>
 <main>
@@ -140,15 +140,23 @@ async function load(){
       data.claude.forEach(p=>p.sessions.forEach(s=>{if(s.mtime>cutoff)sel.claude.add(s.path)}));
       data.codex.forEach(s=>{if(s.mtime>cutoff)sel.codex.add(s.path)});
     }
-  } else { data=await api('/api/catalog');
-    if(data.missing){data=null} else { $('#host').textContent=`云端清单来自 ${data.meta.host} · ${data.meta.time.slice(0,16).replace('T',' ')}`;
+  } else { try{data=await api('/api/catalog')}catch(e){data={missing:true}}
+    if(!data||data.missing){data=null} else { $('#host').textContent=`云端清单来自 ${data.meta.host} · ${data.meta.time.slice(0,16).replace('T',' ')}`;
       sel.claude=new Set(data.claude.flatMap(p=>p.sessions.map(s=>s.path))); sel.codex=new Set(data.codex.map(s=>s.path)); sel.code=new Set(data.code.map(c=>c.path)); }
-    st.snapshots=[]; api('/api/snapshots').then(r=>{if(Array.isArray(r)){st.snapshots=r;if(mode==='restore'&&tab==='sessions')render()}});
+    st.snapshots=[]; fillSnaps(); api('/api/snapshots').then(r=>{if(Array.isArray(r)){st.snapshots=r;fillSnaps()}});
   }
-  render();
+  render(); fillSnaps();
 }
-function setMode(m){mode=m;$('#m-push').classList.toggle('on',m==='push');$('#m-restore').classList.toggle('on',m==='restore');$('#go').textContent=m==='push'?'上云':'恢复到本机';load()}
-function setTab(t){tab=t;document.querySelectorAll('nav button[id^=n-]').forEach(b=>b.classList.toggle('on',b.id==='n-'+t));render()}
+function fillSnaps(){
+  const w=$('#snapwrap'), sel=$('#snapsel'); if(!w)return;
+  if(mode!=='restore'){w.hidden=true;return}
+  w.hidden=false;
+  const snaps=(st.snapshots||[]).slice().reverse();
+  if(snaps.length){sel.innerHTML=snaps.map(s=>`<option value="${s.id}">${s.id} · ${s.time.slice(0,16).replace('T',' ')} · ${s.host}</option>`).join('');if(!snapshot||snapshot==='latest')snapshot=snaps[0].id;sel.value=snapshot}
+  else{sel.innerHTML='<option value="latest">最新（连接云端后可选具体版本）</option>';snapshot='latest'}
+}
+function setMode(m){mode=m;$('#m-push').classList.toggle('on',m==='push');$('#m-restore').classList.toggle('on',m==='restore');$('#go').textContent=m==='push'?'上云':'恢复到本机';fillSnaps();load()}
+function setTab(t){tab=t;fillSnaps&&fillSnaps();document.querySelectorAll('nav button[id^=n-]').forEach(b=>b.classList.toggle('on',b.id==='n-'+t));render()}
 
 function render(){
   const v=$('#view');
@@ -175,7 +183,7 @@ function renderSessions(v){
   let h=`<div class="toolbar"><input type="text" placeholder="搜索标题或目录…" value="${esc(window._q||'')}" oninput="window._q=this.value;renderSessions(document.querySelector('#view'))"><span class="sp"></span>
     <label class="codechip ${sel.autoCode?'on':''}" style="margin:0"><input type="checkbox" ${sel.autoCode?'checked':''} onchange="sel.autoCode=this.checked;renderSessions($('#view'))">勾会话时自动带上代码目录</label><button onclick="bulk(true)">全选可见</button><button onclick="bulk(false)">清空可见</button>${mode==='push'?'<button onclick="recent(30)">最近 30 天</button><button onclick="recent(90)">最近 90 天</button>':''}</div>
     <p class="hint">${mode==='push'?'勾选要上云的会话。按项目目录分组，标题取自会话名或第一句提问。':'勾选要恢复到这台电脑的会话。恢复后在对应目录里运行 claude --resume 或 codex resume 即可继续。'}</p>`;
-  if(mode==='restore'&&st.snapshots.length){h+=`<p class="hint">快照：<select style="width:auto" onchange="snapshot=this.value">${st.snapshots.slice().reverse().map(s=>`<option value="${s.id}">${s.id} · ${s.time.slice(0,16).replace('T',' ')} · ${s.host}</option>`).join('')}</select></p>`}
+  if(mode==='restore'){h+=`<p class="hint">恢复版本在右上角「版本」下拉选择${st.snapshots.length?'':'（连接云端后可选具体时间点）'}。要把代码目录放到本机的其它盘或目录，去左侧「代码」页逐个改路径或统一设根目录。</p>`}
   for(const g of groups){
     const items=g.items.filter(s=>!q||s.title.toLowerCase().includes(q)||g.cwd.toLowerCase().includes(q)); if(!items.length)continue;
     const nSel=items.filter(s=>sel[s.src].has(s.path)).length, all=nSel===items.length, some=nSel>0&&!all;
