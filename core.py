@@ -195,7 +195,7 @@ def cmd_snapshot(paths, include_sqlite=True, logger=log, progress=None):
     run(["restic", "unlock"], check=False, logger=lambda m: None)   # 清理上次被中断留下的失效锁（只删无进程持有的锁）
     if repo.startswith("rclone:"):   # 网盘 API 有频率限制（尤其 Google Drive 共享 client_id）：降并发、大分块、限速
         os.environ["RESTIC_PACK_SIZE"] = "64"
-        tune = ["-o", "rclone.connections=2", "-o", "rclone.args=serve restic --stdio --transfers 2 --checkers 2 --tpslimit 4 --tpslimit-burst 2 --retries 10 --low-level-retries 20 --drive-pacer-min-sleep 300ms --drive-chunk-size 64M"]
+        tune = ["-o", "rclone.connections=2", "-o", "rclone.timeout=15m", "-o", "rclone.args=serve restic --stdio --transfers 2 --checkers 2 --tpslimit 4 --tpslimit-burst 2 --retries 15 --low-level-retries 30 --timeout 15m --contimeout 2m --expect-continue-timeout 30s --drive-pacer-min-sleep 500ms --drive-chunk-size 32M --drive-acknowledge-abuse"]
         logger("网盘后端：并发降到 2 路，分块 64M，限速 4 请求/秒")
     rc = run(["restic", "backup", "--json", *tune, "--files-from-verbatim", str(listf), "--tag", "aisync", "--tag", hostname(),
          *sum((["--exclude", e] for e in ("node_modules", ".venv", "__pycache__", "*.tmp", ".DS_Store", "Thumbs.db")), []), "--exclude-caches"], check=False, logger=logger, progress=progress)
@@ -226,7 +226,7 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
     restic_ok()
     target = AISYNC / "restored" / time.strftime("%Y%m%d-%H%M%S"); target.mkdir(parents=True)
     run(["restic", "unlock"], check=False, logger=lambda m: None)
-    tune = ["-o", "rclone.connections=2", "-o", "rclone.args=serve restic --stdio --transfers 2 --tpslimit 4 --retries 10 --low-level-retries 20 --drive-pacer-min-sleep 300ms"] if read_conf().get("RESTIC_REPOSITORY", "").startswith("rclone:") else []
+    tune = ["-o", "rclone.connections=2", "-o", "rclone.timeout=15m", "-o", "rclone.args=serve restic --stdio --transfers 2 --tpslimit 4 --retries 15 --low-level-retries 30 --timeout 15m --contimeout 2m --drive-pacer-min-sleep 500ms"] if read_conf().get("RESTIC_REPOSITORY", "").startswith("rclone:") else []
     run(["restic", "restore", "--json", *tune, snapshot, "--target", str(target), *sum((["--include", p] for p in paths), [])], logger=logger, progress=progress)
     pending = []
     for p in paths:

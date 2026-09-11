@@ -212,6 +212,8 @@ def _hint_logger(L):
         if "operation not permitted" in m and "tcc" not in seen:
             seen.add("tcc"); L("⚠ macOS 拒绝访问该目录（下载/桌面/文稿/移动硬盘受隐私保护）。到 系统设置 → 隐私与安全性 → 完全磁盘访问权限 打开 aisync 的开关，然后 Cmd+Q 完全退出 aisync 再重新打开。若开关已经是开着的仍报错：用「−」删掉 aisync 再用「+」重新添加 /Applications/aisync.app（应用更新后旧授权会失效）")
         if "repository is already locked" in m and "lock" not in seen: seen.add("lock"); L("⚠ 仓库有残留锁（上次备份被中断）。下次运行会自动清理；也可现在重试一次")
+        if ("context deadline exceeded" in m or "Client.Timeout" in m or "awaiting headers" in m) and "timeout" not in seen:
+            seen.add("timeout"); L("⚠ 连接云端超时。多为网络到 Google Drive 不稳或被墙。可直接再点一次（restic 会断点续传，不会重复上传）；若长期连不上，建议在「安装与配置」改用 Cloudflare R2（国内直连、不限速），或给这台机器配好代理后重试")
     return log
 
 def do_push(sel):
