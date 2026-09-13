@@ -2,7 +2,7 @@
 """aisync 引擎（纯 Python，macOS / Windows / Linux 通用）
 L1 config   技能/agents/命令/记忆/设置 → git
 L2 sessions 会话记录/代码/sqlite     → restic 加密快照
-用法: python core.py {init,status,push,pull,snapshot,restore,remap,doctor,schedule}
+用法: python core.py {init,status,push,pull,snapshot,restore,remap,repair,doctor,schedule}
 """
 import json, os, platform, re, shutil, sqlite3, subprocess, sys, time
 from pathlib import Path
@@ -279,7 +279,10 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
         logger(f"⚠ 路径重映射时出错（{e}），但文件已恢复到位；会话若在 Claude 里对不上目录，可重开一次 aisync 恢复")
     return pending
 
-def encode_project(path: str): return re.sub(r"[\\/:]", "-", path)
+def encode_project(path: str):
+    """Claude 的项目目录名编码：非字母数字的字符（含 / \\ : . _ 和所有中文）一律变 '-'。
+    已用本机 11 个项目全部验证通过。注意这是有损的：中文路径无法从目录名反推。"""
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 def _merge_dir(src: Path, dst: Path):
     """把 src 目录合并进 dst（dst 已存在时逐文件搬，冲突覆盖），最后删掉空的 src。"""
@@ -293,25 +296,105 @@ def _merge_dir(src: Path, dst: Path):
     try: src.rmdir()
     except OSError: pass
 
+def session_cwd(f: Path):
+    """取会话文件的归属 cwd：第一条 user 消息的 cwd（与 inventory 的判定一致）。"""
+    try:
+        with open(f, "rb") as fh: head = fh.read(200000).decode("utf-8", "ignore")
+    except OSError: return None
+    for line in head.split("\n"):
+        if '"cwd"' not in line: continue
+        try: d = json.loads(line)
+        except Exception: continue
+        if d.get("type") == "user" and d.get("cwd"): return d["cwd"]
+    return None
+
 def cmd_remap(old, new, logger=log):
-    old_enc, new_enc = encode_project(old), encode_project(new)
-    renamed = 0
-    for d in list((CLAUDE / "projects").glob(f"{old_enc}*")) if (CLAUDE / "projects").exists() else []:
-        nd = d.parent / d.name.replace(old_enc, new_enc, 1)
-        if nd == d: continue
-        try:
-            if nd.exists(): _merge_dir(d, nd)      # 目标已存在（比如重复恢复）：合并，不再崩溃
-            else: d.rename(nd)
-            renamed += 1
-        except Exception as e: logger(f"⚠ 项目目录 {d.name} 改名失败（{e}），跳过，不影响其它")
-    n = 0
-    for root in (CLAUDE / "projects", CODEX / "sessions"):
-        for f in root.rglob("*.jsonl") if root.exists() else []:
+    """把旧路径 old 下的会话改到新路径 new。
+    关键：项目目录名必须由【新的 cwd】重新编码得出，不能在旧目录名上做字符串替换——
+    旧目录名里中文早已被编码成 '-'，无法还原（交付包 -> ---）。"""
+    old_n, new_n = old.replace("\\", "/").rstrip("/"), new.replace("\\", "/").rstrip("/")
+    n_files = n_dirs = 0
+    root = CLAUDE / "projects"
+    for d in sorted(root.iterdir()) if root.exists() else []:
+        if not d.is_dir(): continue
+        for f in list(d.glob("*.jsonl")):
+            cwd = session_cwd(f)
+            if not cwd: continue
+            c_n = cwd.replace("\\", "/").rstrip("/")
+            if not (c_n == old_n or c_n.startswith(old_n + "/")): continue
+            new_cwd = new + c_n[len(old_n):].replace("/", "\\" if IS_WIN else "/")
+            # 1) 改写会话内的路径：先把本会话的完整 cwd 换成新 cwd（分隔符正确），
+            #    再把其余仍以旧根开头的路径也换过去。两种写法（原样 / 正斜杠）都覆盖。
+            # 会话是 JSON Lines。逐行解析后在【数据结构层】改路径再序列化回去，
+            # 绝不对原始文本做正则/字符串替换——那样极易产生非法转义把整行弄坏。
+            def _map(v):
+                if not isinstance(v, str): return v
+                n = v.replace("\\", "/").rstrip("/")
+                for base, dest in ((c_n, new_cwd), (old_n, new)):
+                    if not base: continue
+                    if n == base: return dest
+                    if n.startswith(base + "/"):
+                        tail = n[len(base):]
+                        return dest + (tail.replace("/", "\\") if IS_WIN else tail)
+                return v
+            def _walk(o):
+                if isinstance(o, str): return _map(o)
+                if isinstance(o, list): return [_walk(x) for x in o]
+                if isinstance(o, dict): return {k: _walk(x) for k, x in o.items()}
+                return o
             try:
-                s = f.read_text(encoding="utf-8", errors="ignore")
-                if old in s: f.write_text(s.replace(old, new), encoding="utf-8"); n += 1
-            except Exception: pass
-    logger(f"已把 {old} 重映射为 {new}（改名 {renamed} 个目录，改写 {n} 个会话文件）")
+                lines = f.read_text(encoding="utf-8", errors="ignore").split("\n")
+                out, changed = [], False
+                for ln in lines:
+                    t = ln.strip()
+                    if not t: out.append(ln); continue
+                    try: obj = json.loads(t)
+                    except Exception: out.append(ln); continue   # 解析不了就原样保留，绝不破坏
+                    new_obj = _walk(obj)
+                    if new_obj != obj:
+                        out.append(json.dumps(new_obj, ensure_ascii=False)); changed = True
+                    else: out.append(ln)
+                if changed:
+                    f.write_text("\n".join(out), encoding="utf-8"); n_files += 1
+            except Exception as e: logger(f"⚠ 改写 {f.name} 失败：{e}"); continue
+            # 2) 按新 cwd 重新编码目录名，把会话挪过去
+            want = root / encode_project(new_cwd)
+            if want == f.parent: continue
+            try:
+                want.mkdir(parents=True, exist_ok=True)
+                tgt = want / f.name
+                if tgt.exists(): tgt.unlink()
+                shutil.move(str(f), str(tgt)); n_dirs += 1
+            except Exception as e: logger(f"⚠ 移动 {f.name} 到 {want.name} 失败：{e}")
+        try:
+            if d.exists() and not any(d.iterdir()): d.rmdir()
+        except OSError: pass
+    logger(f"已把 {old} 重映射为 {new}（改写 {n_files} 个会话，归位 {n_dirs} 个到新项目目录）")
+
+def cmd_repair(logger=log):
+    """就地修复：按每个会话自己的 cwd 重新计算项目目录名并归位。
+    用于恢复后目录名编码不对（例如含中文的路径）导致 Claude 不显示会话。不联网。"""
+    root = CLAUDE / "projects"
+    if not root.exists(): logger("没有 ~/.claude/projects"); return 0
+    moved = 0
+    for d in sorted([x for x in root.iterdir() if x.is_dir()]):
+        for f in list(d.glob("*.jsonl")):
+            cwd = session_cwd(f)
+            if not cwd: continue
+            want = root / encode_project(cwd)
+            if want == f.parent: continue
+            try:
+                want.mkdir(parents=True, exist_ok=True)
+                tgt = want / f.name
+                if tgt.exists(): tgt.unlink()
+                shutil.move(str(f), str(tgt)); moved += 1
+                logger(f"  {f.parent.name} -> {want.name}  ({f.name})")
+            except Exception as e: logger(f"⚠ {f.name} 移动失败：{e}")
+        try:
+            if d.exists() and not any(d.iterdir()): d.rmdir()
+        except OSError: pass
+    logger(f"修复完成：归位 {moved} 个会话到正确的项目目录")
+    return moved
 
 # ---------------- 秘密打包：用 restic 密码加密后随 git 走 ----------------
 import hashlib, hmac, struct, secrets as _secrets
@@ -439,6 +522,7 @@ def main(argv):
     elif c == "pull": cmd_pull(); cmd_doctor()
     elif c == "restore": print("待手工处理:", cmd_restore([str(CLAUDE / "projects"), str(CODEX / "sessions")], a[1] if len(a) > 1 else "latest")); cmd_doctor()
     elif c == "remap": cmd_remap(a[1], a[2] if len(a) > 2 else str(HOME))
+    elif c == "repair": cmd_repair()
     elif c == "doctor": cmd_doctor()
     elif c == "schedule": cmd_schedule()
     elif c == "ui":
