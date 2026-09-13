@@ -123,7 +123,7 @@ footer .prog{display:flex;align-items:center;gap:10px;flex:1}footer .prog[hidden
 </div></div>
 <script>
 let mode='push', tab='sessions', data=null, st=null, snapshot='';
-const sel={claude:new Set(), codex:new Set(), code:new Set(), config:true, history:true, sqlite:true, autoCode:true, codeTargets:{}};
+const sel={claude:new Set(), codex:new Set(), code:new Set(), config:true, history:true, sqlite:true, autoCode:true, codeTargets:{}, desktopIndex:true};
 const $=s=>document.querySelector(s);
 const fmt=b=>b<1024?b+' B':b<1048576?(b/1024).toFixed(0)+' K':b<1073741824?(b/1048576).toFixed(1)+' M':(b/1073741824).toFixed(2)+' G';
 const dt=(s,m)=>{const d=s?new Date(s):new Date(m*1000);return isNaN(d)?'':d.toISOString().slice(0,10)};
@@ -236,6 +236,7 @@ function renderSkills(v){
   <div style="margin-top:22px">
    <label class="opt"><input type="checkbox" ${sel.config?'checked':''} onchange="sel.config=this.checked;sum()"><span>技能与配置层（L1）<small>${mode==='push'?'提交并推送到 git 远端':'从 git 远端拉回并写入 ~/.claude 与 ~/.codex，原文件先备份'}</small></span></label>
    <label class="opt"><input type="checkbox" ${sel.history?'checked':''} onchange="sel.history=this.checked;sum()"><span>命令历史与任务<small>~/.claude/history.jsonl、tasks，~/.codex/session_index.jsonl</small></span></label>
+   <label class="opt"><input type="checkbox" ${sel.desktopIndex?'checked':''} onchange="sel.desktopIndex=this.checked;sum()"><span>Claude 桌面版会话索引<small>${mode==='push'?'桌面版侧栏靠它显示会话，不是 ~/.claude/projects。只导出标题/目录/时间等可移植字段':'写回后桌面版侧栏才能看到恢复的会话。只写本机已恢复的会话，不覆盖本机现有条目，写完需重启桌面版'}</small></span></label>
    <label class="opt"><input type="checkbox" ${sel.sqlite?'checked':''} onchange="sel.sqlite=this.checked;sum()"><span>Codex 数据库（会话索引 1.3G、记忆、状态）<small>${mode==='push'?'用 sqlite .backup 做一致性备份，restic 会去重':'恢复到 ~/aisync/restored，需退出 Codex 后手动拷回'}</small></span></label>
   </div>`;
 }
@@ -312,6 +313,12 @@ function renderGuide(v){
    <div class="r"><button onclick="$('#rp').value=genPass()">生成随机密码</button><button class="primary" onclick="api('/api/restic-pass',{password:$('#rp').value}).then(r=>{if(r.error)alert(r.error);else{alert('已保存到 ~/aisync/.restic-pass');load()}})">保存</button></div>
   </div>
 
+  <h2>修复会话不显示</h2>
+  <div class="card"><p>恢复后 Claude 里看不到会话，多半是项目目录名的编码对不上（含中文的路径尤其常见）。下面这个修复不联网、不重新下载，按每个会话自己的 cwd 重新归位目录名，几秒钟完成。</p>
+   <div class="r"><button class="primary" onclick="runRepair()">修复项目目录名</button></div>
+   <p class="hint" style="margin-top:8px">注意：Claude <b>桌面版</b>侧栏读的是它自己的会话索引，不是 <code>~/.claude/projects</code>，所以修复后请用命令行 <code>claude --resume</code> 查看恢复的会话。</p>
+  </div>
+
   <h2>新电脑</h2>
   <div class="card"><p>1. 装本应用（${P==='mac'?'dmg 拖到应用程序，首次右键「打开」':P==='win'?'解压 aisync.exe 放任意目录；需要 Git for Windows 和 WebView2（Win10/11 自带）':'解压后 chmod +x aisync；需要 gir1.2-webkit2-4.1 和 git'}）。</p>
    <p>2. 把旧电脑的 <code>~/aisync/aisync.conf</code>、<code>~/aisync/.restic-pass</code> 和 <code>~/.config/rclone/rclone.conf</code>（Windows 在 <code>%APPDATA%\rclone</code>）拷到新电脑同样位置。</p>
@@ -333,6 +340,7 @@ const RC_HINT={onedrive:'点保存后浏览器会打开微软登录页；企业�
 function rcFields(){const k=$('#rc-type').value;$('#rc-name').value=k;$('#rc-fields').innerHTML=RC_FIELDS[k].map(([n,l,ph])=>`<label>${l}</label><input type="${n==='pass'||n==='secret_access_key'||n==='key'?'password':'text'}" data-k="${n}" placeholder="${esc(ph)}">`).join('')+(RC_HINT[k]?`<label></label><small style="color:var(--mute)">${RC_HINT[k]}</small>`:'')}
 async function rcSave(){const params={};document.querySelectorAll('#rc-fields input').forEach(i=>params[i.dataset.k]=i.value.trim());await runBackend('/api/backend/rclone',{type:$('#rc-type').value,name:$('#rc-name').value.trim(),path:$('#rc-path').value.trim(),params})}
 async function copyRc(){const r=await api('/api/rclone-path');try{await navigator.clipboard.writeText(r.path||'')}catch(e){}alert('已复制：'+(r.path||'未找到'))}
+async function runRepair(){const r=await api('/api/repair',{});if(r.error){alert(r.error);return}showLog(false);pollLog(0,()=>load())}
 function genPass(){const a='abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';const b=new Uint32Array(28);crypto.getRandomValues(b);return [...b].map(x=>a[x%a.length]).join('')}
 async function runBackend(path,body){const r=await api(path,body);if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
 async function gitTest(){const v=$('#g-git').value.trim();if(!v){alert('先填远端地址');return}const r=await api('/api/backend/git',{remote:v});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
@@ -344,7 +352,7 @@ function tog(src,p,on){on?sel[src].add(p):sel[src].delete(p);if(src!=='code')aut
 function grp(cb,items){items.forEach(([s,p])=>{cb.checked?sel[s].add(p):sel[s].delete(p);autoCode(s,p,cb.checked)});renderSessions($('#view'));sum();persist()}
 function bulk(on){const q=(window._q||'').toLowerCase();groupsOf().forEach(g=>g.items.forEach(s=>{if(!q||s.title.toLowerCase().includes(q)||g.cwd.toLowerCase().includes(q))on?sel[s.src].add(s.path):sel[s.src].delete(s.path)}));renderSessions($('#view'));sum();persist()}
 function recent(d){const c=Date.now()/1000-d*86400;sel.claude.clear();sel.codex.clear();data.claude.forEach(p=>p.sessions.forEach(s=>{if(s.mtime>c)sel.claude.add(s.path)}));data.codex.forEach(s=>{if(s.mtime>c)sel.codex.add(s.path)});renderSessions($('#view'));sum();persist()}
-function payload(){return {code_targets:Object.fromEntries(Object.entries(sel.codeTargets).filter(([k,v])=>v&&sel.code.has(k))),claude_sessions:[...sel.claude],codex_sessions:[...sel.codex],code:[...sel.code],config:sel.config,include_history:sel.history,include_sqlite:sel.sqlite,sqlite:sel.sqlite,snapshot:snapshot}}
+function payload(){return {desktop_index:sel.desktopIndex, code_targets:Object.fromEntries(Object.entries(sel.codeTargets).filter(([k,v])=>v&&sel.code.has(k))),claude_sessions:[...sel.claude],codex_sessions:[...sel.codex],code:[...sel.code],config:sel.config,include_history:sel.history,include_sqlite:sel.sqlite,sqlite:sel.sqlite,snapshot:snapshot}}
 let _pt;function persist(){if(mode!=='push')return;clearTimeout(_pt);_pt=setTimeout(()=>api('/api/selection',payload()),400)}
 function sum(){
   if(!data){$('#sum').innerHTML='';$('#go').disabled=true;return}

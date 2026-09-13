@@ -19,6 +19,21 @@ if sys.platform != "win32":
         except OSError: pass
 
 sys.path.insert(0, str(RES))
+
+# 命令行子命令（repair / doctor / push ...）：GUI 包默认没有控制台，先挂到父终端再交给引擎处理。
+# 不加这段的话 aisync.exe repair 会被忽略、直接弹出窗口，看起来「跑完什么都没发生」。
+if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            if ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        except Exception: pass
+    import core
+    core.main(sys.argv)
+    raise SystemExit(0)
+
 import ui, webview
 
 def free_port():

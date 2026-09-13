@@ -133,6 +133,7 @@ def stage_l1(logger=log):
         "updated": time.strftime("%Y-%m-%dT%H:%M:%S"), "claude_version": ver("claude"), "codex_version": ver("codex"),
         "claude_projects": sorted(x.name for x in (CLAUDE / "projects").iterdir()) if (CLAUDE / "projects").exists() else []},
         indent=1, ensure_ascii=False), encoding="utf-8")
+    export_desktop_index(REPO / "desktop-index", logger=logger)
     if not (REPO / ".gitattributes").exists(): (REPO / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
     if not (REPO / ".gitignore").exists(): (REPO / ".gitignore").write_text("auth.json\n*.sqlite*\n", encoding="utf-8")
 
@@ -243,7 +244,7 @@ def _remap_home(path_str: str, old_home: str):
         return str(HOME / Path(*rel.split("/")))
     return path_str
 
-def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=None, targets=None):
+def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=None, targets=None, desktop_index=True):
     """targets: {原路径: 新路径}，用于把代码目录恢复到自定义位置；会话里的 cwd 也会同步改写"""
     targets = {k: v for k, v in (targets or {}).items() if v and v != k}
     """先还原到临时目录，再搬到原位（跨平台一致），返回未能自动就位的路径"""
@@ -277,6 +278,11 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
             if op != old_p: cmd_remap(op, new_p, logger=logger)
     except Exception as e:
         logger(f"⚠ 路径重映射时出错（{e}），但文件已恢复到位；会话若在 Claude 里对不上目录，可重开一次 aisync 恢复")
+    if desktop_index:
+        pm = dict(targets)
+        if old_home and old_home != str(HOME): pm.setdefault(old_home, str(HOME))
+        try: import_desktop_index(REPO / "desktop-index", path_map=pm, logger=logger)
+        except Exception as e: logger(f"⚠ 写回桌面版索引失败（{e}），不影响已恢复的会话")
     return pending
 
 def encode_project(path: str):
@@ -395,6 +401,77 @@ def cmd_repair(logger=log):
         except OSError: pass
     logger(f"修复完成：归位 {moved} 个会话到正确的项目目录")
     return moved
+
+# ---------------- 桌面版会话索引（侧栏靠它显示，不是 ~/.claude/projects） ----------------
+# 结构：<AppSupport>/Claude/claude-code-sessions/<accountUuid>/<profileUuid>/local_<uuid>.json
+# 两层 uuid 是本机账号/设备标识，换机后不同，所以恢复时要探测目标机自己的目录，不能照搬。
+DESKTOP_DIRS = {
+    "darwin": Path.home() / "Library/Application Support/Claude",
+    "win32": Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming")) / "Claude",
+}
+# 只保留可移植字段；机器相关的（Chrome 标签组、MCP 配置、工具快照等）一律不带
+INDEX_KEEP = {"sessionId", "cliSessionId", "cwd", "originCwd", "title", "titleSource",
+              "createdAt", "lastActivityAt", "lastFocusedAt", "model", "effort",
+              "isArchived", "permissionMode", "completedTurns"}
+
+def desktop_root():
+    d = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
+    return d / "claude-code-sessions"
+
+def desktop_index_dir(create=False):
+    """返回本机的 <account>/<profile> 索引目录；换机后 uuid 不同，靠探测而非硬编码。"""
+    root = desktop_root()
+    if not root.exists(): return None
+    cands = sorted(root.glob("*/*"), key=lambda p: -p.stat().st_mtime)
+    cands = [c for c in cands if c.is_dir()]
+    return cands[0] if cands else None
+
+def export_desktop_index(dst: Path, logger=log):
+    """把桌面版索引里的会话条目导出到 repo（只留可移植字段）。"""
+    d = desktop_index_dir()
+    if not d: logger("  未发现 Claude 桌面版索引，跳过"); return 0
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in dst.glob("*.json"): f.unlink()
+    n = 0
+    for f in d.glob("local_*.json"):
+        try: obj = json.loads(f.read_text(encoding="utf-8"))
+        except Exception: continue
+        slim = {k: v for k, v in obj.items() if k in INDEX_KEEP}
+        if not slim.get("cliSessionId"): continue
+        (dst / f.name).write_text(json.dumps(slim, ensure_ascii=False, indent=1), encoding="utf-8")
+        n += 1
+    logger(f"  桌面版会话索引：导出 {n} 条")
+    return n
+
+def import_desktop_index(src: Path, path_map=None, logger=log):
+    """把索引写回本机桌面版。只写 cliSessionId 能在本机找到 jsonl 的条目，
+    并按 path_map 改写 cwd；已存在的同名条目不覆盖（保护本机现有会话列表）。"""
+    if not src.exists(): logger("  云端没有桌面版索引，跳过"); return 0
+    d = desktop_index_dir()
+    if not d:
+        logger("  本机未安装 Claude 桌面版（或未登录），跳过索引恢复"); return 0
+    have = {p.stem for p in (CLAUDE / "projects").rglob("*.jsonl")} if (CLAUDE / "projects").exists() else set()
+    n = skipped = 0
+    for f in sorted(src.glob("local_*.json")):
+        try: obj = json.loads(f.read_text(encoding="utf-8"))
+        except Exception: continue
+        cli = obj.get("cliSessionId")
+        if cli not in have: skipped += 1; continue      # 没恢复对应会话就不要造孤儿条目
+        for k in ("cwd", "originCwd"):
+            if obj.get(k) and path_map:
+                for old, new in path_map.items():
+                    o = old.replace("\\", "/").rstrip("/"); c = obj[k].replace("\\", "/").rstrip("/")
+                    if c == o: obj[k] = new; break
+                    if c.startswith(o + "/"):
+                        tail = c[len(o):]
+                        obj[k] = new + (tail.replace("/", "\\") if IS_WIN else tail); break
+        tgt = d / f.name
+        if tgt.exists(): skipped += 1; continue          # 不覆盖本机已有条目
+        tgt.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+        n += 1
+    logger(f"  桌面版会话索引：写入 {n} 条，跳过 {skipped} 条（本机已有或无对应会话）")
+    if n: logger("  ⚠ 重启 Claude 桌面版后侧栏才会刷新")
+    return n
 
 # ---------------- 秘密打包：用 restic 密码加密后随 git 走 ----------------
 import hashlib, hmac, struct, secrets as _secrets

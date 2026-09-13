@@ -257,7 +257,7 @@ def do_restore(sel):
     if sel.get("sqlite"): paths.append(str(STAGE))
     if paths:
         L(f"② 从快照 {sel.get('snapshot') or 'latest'} 恢复 {len(paths)} 个路径")
-        pending = core.cmd_restore(paths, sel.get("snapshot") or "latest", old_home=old_home, logger=L, progress=TASK.set_progress, targets=sel.get("code_targets") or {})
+        pending = core.cmd_restore(paths, sel.get("snapshot") or "latest", old_home=old_home, logger=L, progress=TASK.set_progress, targets=sel.get("code_targets") or {}, desktop_index=sel.get("desktop_index", True))
         for p in pending: L(f"⚠ 请退出 Codex 后把 {p} 里的 sqlite 拷回 ~/.codex/")
     L("③ 体检"); core.cmd_doctor(logger=L)
 
@@ -349,6 +349,8 @@ class H(BaseHTTPRequestHandler):
                     pf = AISYNC / ".restic-pass"; pf.write_text(body["restic_pass"], encoding="utf-8"); pf.chmod(0o600)
                 core.cmd_init(logger=lambda *a: None)
                 self._json({"ok": True})
+            elif u.path == "/api/repair":
+                TASK.run("repair", lambda: core.cmd_repair(logger=TASK.log)); self._json({"ok": True})
             elif u.path == "/api/open-privacy":
                 if sys.platform == "darwin": subprocess.run(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
                 self._json({"ok": True})
