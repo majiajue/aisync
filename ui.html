@@ -236,7 +236,7 @@ function renderSkills(v){
   <div style="margin-top:22px">
    <label class="opt"><input type="checkbox" ${sel.config?'checked':''} onchange="sel.config=this.checked;sum()"><span>技能与配置层（L1）<small>${mode==='push'?'提交并推送到 git 远端':'从 git 远端拉回并写入 ~/.claude 与 ~/.codex，原文件先备份'}</small></span></label>
    <label class="opt"><input type="checkbox" ${sel.history?'checked':''} onchange="sel.history=this.checked;sum()"><span>命令历史与任务<small>~/.claude/history.jsonl、tasks，~/.codex/session_index.jsonl</small></span></label>
-   <label class="opt"><input type="checkbox" ${sel.desktopIndex?'checked':''} onchange="sel.desktopIndex=this.checked;sum()"><span>Claude 桌面版会话索引<small>${mode==='push'?'桌面版侧栏靠它显示会话，不是 ~/.claude/projects。只导出标题/目录/时间等可移植字段':'写回后桌面版侧栏才能看到恢复的会话。只写本机已恢复的会话，不覆盖本机现有条目，写完需重启桌面版'}</small></span></label>
+   <label class="opt"><input type="checkbox" ${sel.desktopIndex?'checked':''} onchange="sel.desktopIndex=this.checked;sum()"><span>桌面端会话索引（Claude + Codex）<small>${mode==='push'?'两个桌面端的侧栏都靠各自的索引显示会话：Claude 用 local_*.json，Codex 用 state_5.sqlite 的 threads 表。只导出标题/目录/时间等可移植字段':'写回后两个桌面端侧栏才能看到恢复的会话。只写本机已有对应会话文件的条目，不覆盖本机现有条目，写完需重启对应应用'}</small></span></label>
    <label class="opt"><input type="checkbox" ${sel.sqlite?'checked':''} onchange="sel.sqlite=this.checked;sum()"><span>Codex 数据库（会话索引 1.3G、记忆、状态）<small>${mode==='push'?'用 sqlite .backup 做一致性备份，restic 会去重':'恢复到 ~/aisync/restored，需退出 Codex 后手动拷回'}</small></span></label>
   </div>`;
 }

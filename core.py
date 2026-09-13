@@ -134,6 +134,7 @@ def stage_l1(logger=log):
         "claude_projects": sorted(x.name for x in (CLAUDE / "projects").iterdir()) if (CLAUDE / "projects").exists() else []},
         indent=1, ensure_ascii=False), encoding="utf-8")
     export_desktop_index(REPO / "desktop-index", logger=logger)
+    export_codex_index(REPO / "codex-index", logger=logger)
     if not (REPO / ".gitattributes").exists(): (REPO / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
     if not (REPO / ".gitignore").exists(): (REPO / ".gitignore").write_text("auth.json\n*.sqlite*\n", encoding="utf-8")
 
@@ -282,7 +283,11 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
         pm = dict(targets)
         if old_home and old_home != str(HOME): pm.setdefault(old_home, str(HOME))
         try: import_desktop_index(REPO / "desktop-index", path_map=pm, logger=logger)
-        except Exception as e: logger(f"⚠ 写回桌面版索引失败（{e}），不影响已恢复的会话")
+        except Exception as e: logger(f"⚠ 写回 Claude 桌面版索引失败（{e}），不影响已恢复的会话")
+        try:
+            import_codex_index(REPO / "codex-index", path_map=pm, logger=logger)
+            import_codex_global_state(REPO / "codex-index", path_map=pm, logger=logger)
+        except Exception as e: logger(f"⚠ 写回 Codex 索引失败（{e}），不影响已恢复的会话")
     return pending
 
 def encode_project(path: str):
@@ -471,6 +476,127 @@ def import_desktop_index(src: Path, path_map=None, logger=log):
         n += 1
     logger(f"  桌面版会话索引：写入 {n} 条，跳过 {skipped} 条（本机已有或无对应会话）")
     if n: logger("  ⚠ 重启 Claude 桌面版后侧栏才会刷新")
+    return n
+
+# ---------------- Codex 桌面端会话索引（侧栏靠 state_5.sqlite 的 threads 表） ----------------
+# CODEX_HOME 跨平台都是 ~/.codex，不像 Claude 桌面版要探测 App Support。
+# threads 主键是 id，且 74/74 与 rollout 文件名 uuid 一致，所以能逐行改写路径并按 id 合并。
+CODEX_STATE_DB = "state_5.sqlite"
+# 全局状态里只带可移植的键；electron-persisted-atom-state 894KB（含 accountId、MCP 目录、
+# prompt 历史）和窗口位置、设备 token 一律不带。
+GLOBAL_KEEP_PLAIN = {"thread-titles", "project-order", "pinned-thread-ids", "selected-project",
+                     "sidebar-project-thread-orders", "thread-project-assignments",
+                     "electron-thread-read-state-v1", "electron-initial-follow-up-queue-mode"}
+GLOBAL_KEEP_PATHS = {"local-projects", "electron-saved-workspace-roots",
+                     "electron-workspace-root-labels", "active-workspace-roots"}
+
+def _remap_path_str(v, path_map):
+    if not isinstance(v, str) or not path_map: return v
+    n = v.replace("\\", "/").rstrip("/")
+    for old, new in path_map.items():
+        o = old.replace("\\", "/").rstrip("/")
+        if not o: continue
+        if n == o: return new
+        if n.startswith(o + "/"):
+            tail = n[len(o):]
+            return new + (tail.replace("/", "\\") if IS_WIN else tail)
+    return v
+
+def export_codex_index(dst: Path, logger=log):
+    """导出 Codex 侧栏会话列表（threads 表）+ 全局状态的可移植部分。"""
+    db = CODEX / CODEX_STATE_DB
+    if not db.exists(): logger("  未发现 Codex state 数据库，跳过"); return 0
+    dst.mkdir(parents=True, exist_ok=True)
+    n = 0
+    try:
+        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True); c.row_factory = sqlite3.Row
+        rows = [dict(r) for r in c.execute("select * from threads")]
+        tools = [dict(r) for r in c.execute("select * from thread_dynamic_tools")]
+        c.close()
+        (dst / "threads.json").write_text(json.dumps({"threads": rows, "thread_dynamic_tools": tools},
+                                                      ensure_ascii=False, indent=1), encoding="utf-8")
+        n = len(rows)
+    except Exception as e:
+        logger(f"  ⚠ 读取 Codex threads 失败：{e}"); return 0
+    gs = CODEX / ".codex-global-state.json"
+    if gs.exists():
+        try:
+            d = json.loads(gs.read_text(encoding="utf-8"))
+            slim = {k: v for k, v in d.items() if k in GLOBAL_KEEP_PLAIN | GLOBAL_KEEP_PATHS}
+            (dst / "global-state.json").write_text(json.dumps(slim, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception as e: logger(f"  ⚠ 读取 Codex 全局状态失败：{e}")
+    logger(f"  Codex 会话索引：导出 {n} 条线程")
+    return n
+
+def import_codex_index(src: Path, path_map=None, logger=log):
+    """写回 Codex 侧栏列表。只写本机确实有 rollout 文件的线程；
+    按主键 id 用 INSERT OR IGNORE 合并，绝不覆盖目标机已有线程。"""
+    f = src / "threads.json"
+    if not f.exists(): logger("  云端没有 Codex 索引，跳过"); return 0
+    db = CODEX / CODEX_STATE_DB
+    if not db.exists(): logger("  本机未安装 Codex（无 state 数据库），跳过"); return 0
+    try: data = json.loads(f.read_text(encoding="utf-8"))
+    except Exception as e: logger(f"  ⚠ 读取云端 Codex 索引失败：{e}"); return 0
+    # 本机实际存在的 rollout：uuid -> 路径。只写有对应文件的线程，避免造出点开就报错的空条目。
+    local = {}
+    sess = CODEX / "sessions"
+    if sess.exists():
+        for p in sess.rglob("rollout-*.jsonl"):
+            m = re.search(r"-([0-9a-f-]{36})\.jsonl$", p.name)
+            if m: local[m.group(1)] = str(p)
+    rows = [r for r in data.get("threads", []) if r.get("id") in local]
+    if not rows: logger("  没有可写入的线程（本机缺少对应的 rollout 文件）"); return 0
+    n = 0
+    try:
+        c = sqlite3.connect(str(db))
+        cols = [d[1] for d in c.execute("PRAGMA table_info(threads)")]
+        for r in rows:
+            r = dict(r)
+            r["rollout_path"] = local.get(r["id"], r.get("rollout_path"))
+            r["cwd"] = _remap_path_str(r.get("cwd"), path_map)
+            vals = [r.get(k) for k in cols]
+            q = f"INSERT OR IGNORE INTO threads ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
+            cur = c.execute(q, vals); n += cur.rowcount
+        ids = {r["id"] for r in rows}
+        tcols = [d[1] for d in c.execute("PRAGMA table_info(thread_dynamic_tools)")]
+        for t in data.get("thread_dynamic_tools", []):
+            if t.get("thread_id") not in ids: continue
+            q = f"INSERT OR IGNORE INTO thread_dynamic_tools ({','.join(tcols)}) VALUES ({','.join('?' * len(tcols))})"
+            c.execute(q, [t.get(k) for k in tcols])
+        c.commit(); c.close()
+    except Exception as e:
+        logger(f"  ⚠ 写入 Codex 索引失败：{e}"); return 0
+    logger(f"  Codex 会话索引：新增 {n} 条线程（已存在的不动）")
+    if n: logger("  ⚠ 重启 Codex 后侧栏才会刷新")
+    return n
+
+def import_codex_global_state(src: Path, path_map=None, logger=log):
+    """合并 Codex 全局状态的可移植键；路径类的按 path_map 改写；本机已有键不覆盖。"""
+    f = src / "global-state.json"
+    gs = CODEX / ".codex-global-state.json"
+    if not f.exists() or not gs.exists(): return 0
+    try:
+        incoming = json.loads(f.read_text(encoding="utf-8"))
+        cur = json.loads(gs.read_text(encoding="utf-8"))
+    except Exception as e: logger(f"  ⚠ 读取 Codex 全局状态失败：{e}"); return 0
+    def fix(o):
+        if isinstance(o, str): return _remap_path_str(o, path_map)
+        if isinstance(o, list): return [fix(x) for x in o]
+        if isinstance(o, dict): return {k: fix(v) for k, v in o.items()}
+        return o
+    n = 0
+    for k, v in incoming.items():
+        v = fix(v) if k in GLOBAL_KEEP_PATHS else v
+        if k not in cur: cur[k] = v; n += 1
+        elif isinstance(cur[k], dict) and isinstance(v, dict):
+            for kk, vv in v.items():
+                if kk not in cur[k]: cur[k][kk] = vv; n += 1
+        elif isinstance(cur[k], list) and isinstance(v, list):
+            for item in v:
+                if item not in cur[k]: cur[k].append(item); n += 1
+    shutil.copy2(gs, gs.with_suffix(".json.aisync-bak"))
+    gs.write_text(json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+    logger(f"  Codex 全局状态：合并 {n} 项（原文件已备份为 .aisync-bak）")
     return n
 
 # ---------------- 秘密打包：用 restic 密码加密后随 git 走 ----------------
