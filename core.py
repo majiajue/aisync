@@ -423,13 +423,37 @@ def desktop_root():
     d = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
     return d / "claude-code-sessions"
 
+def desktop_installed():
+    """桌面版是否装过：App Support/Claude 目录存在即可，不要求已经开过 Code 会话。"""
+    d = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
+    return d.exists()
+
 def desktop_index_dir(create=False):
-    """返回本机的 <account>/<profile> 索引目录；换机后 uuid 不同，靠探测而非硬编码。"""
+    """返回本机的 <account>/<profile> 索引目录；换机后 uuid 不同，靠探测而非硬编码。
+    装了桌面版但从没开过 Code 会话时该目录不存在，create=True 时按现有账号补建，
+    否则只恢复 transcript、侧栏依旧空白。"""
     root = desktop_root()
-    if not root.exists(): return None
-    cands = sorted(root.glob("*/*"), key=lambda p: -p.stat().st_mtime)
-    cands = [c for c in cands if c.is_dir()]
-    return cands[0] if cands else None
+    cands = [c for c in sorted(root.glob("*/*"), key=lambda p: -p.stat().st_mtime) if c.is_dir()] if root.exists() else []
+    if cands: return cands[0]
+    if not create or not desktop_installed(): return None
+    # 从桌面版自己的配置里取账号 uuid（ant-device-registry.json 的键就是 account）
+    base = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
+    acct = prof = None
+    reg = base / "ant-device-registry.json"
+    if reg.exists():
+        try: acct = next(iter(json.loads(reg.read_text(encoding="utf-8"))), None)
+        except Exception: pass
+    # 已有 account 目录就复用它，profile 缺了就新建一个
+    if root.exists():
+        adirs = [d for d in root.iterdir() if d.is_dir()]
+        if adirs: acct = adirs[0].name
+    if not acct: return None
+    import uuid as _uuid
+    prof = str(_uuid.uuid4())
+    d = root / acct / prof
+    d.mkdir(parents=True, exist_ok=True)
+    log(f"  桌面版索引目录不存在，已按账号 {acct[:8]}… 新建 profile")
+    return d
 
 def export_desktop_index(dst: Path, logger=log):
     """把桌面版索引里的会话条目导出到 repo（只留可移植字段）。"""
@@ -452,9 +476,10 @@ def import_desktop_index(src: Path, path_map=None, logger=log):
     """把索引写回本机桌面版。只写 cliSessionId 能在本机找到 jsonl 的条目，
     并按 path_map 改写 cwd；已存在的同名条目不覆盖（保护本机现有会话列表）。"""
     if not src.exists(): logger("  云端没有桌面版索引，跳过"); return 0
-    d = desktop_index_dir()
+    d = desktop_index_dir(create=True)
     if not d:
-        logger("  本机未安装 Claude 桌面版（或未登录），跳过索引恢复"); return 0
+        logger("  未发现 Claude 桌面版（App Support 下无 Claude 目录），跳过索引恢复" if not desktop_installed()
+               else "  Claude 桌面版已安装但拿不到账号标识，跳过索引恢复；先在桌面版里开一个 Code 会话再恢复即可"); return 0
     have = {p.stem for p in (CLAUDE / "projects").rglob("*.jsonl")} if (CLAUDE / "projects").exists() else set()
     n = skipped = 0
     for f in sorted(src.glob("local_*.json")):
@@ -534,7 +559,8 @@ def import_codex_index(src: Path, path_map=None, logger=log):
     f = src / "threads.json"
     if not f.exists(): logger("  云端没有 Codex 索引，跳过"); return 0
     db = CODEX / CODEX_STATE_DB
-    if not db.exists(): logger("  本机未安装 Codex（无 state 数据库），跳过"); return 0
+    if not db.exists():
+        logger("  Codex 未安装或从未运行过（缺 ~/.codex/state_5.sqlite），跳过索引恢复；装好并登录跑一次 codex 后重新恢复即可"); return 0
     try: data = json.loads(f.read_text(encoding="utf-8"))
     except Exception as e: logger(f"  ⚠ 读取云端 Codex 索引失败：{e}"); return 0
     # 本机实际存在的 rollout：uuid -> 路径。只写有对应文件的线程，避免造出点开就报错的空条目。
