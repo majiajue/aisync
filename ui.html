@@ -315,8 +315,10 @@ function renderGuide(v){
 
   <h2>修复会话不显示</h2>
   <div class="card"><p>恢复后 Claude 里看不到会话，多半是项目目录名的编码对不上（含中文的路径尤其常见）。下面这个修复不联网、不重新下载，按每个会话自己的 cwd 重新归位目录名，几秒钟完成。</p>
-   <div class="r"><button class="primary" onclick="runRepair()">修复项目目录名</button></div>
-   <p class="hint" style="margin-top:8px">注意：Claude <b>桌面版</b>侧栏读的是它自己的会话索引，不是 <code>~/.claude/projects</code>，所以修复后请用命令行 <code>claude --resume</code> 查看恢复的会话。</p>
+   <div class="r"><button class="primary" onclick="runRepair()">修复项目目录名</button>
+    <button class="primary" onclick="runReindex()">重建桌面版侧栏索引</button>
+    <label class="hint">最多补最近 <input id="rixn" type="number" min="0" value="200" style="width:5em"> 个（0 = 全部）</label></div>
+   <p class="hint" style="margin-top:8px">Claude <b>桌面版</b>侧栏读的是它自己的会话索引，不是 <code>~/.claude/projects</code>。会话文件已经在本机、侧栏却看不到时点「重建桌面版侧栏索引」：不联网，给本机所有桌面版（官方版和 Claude-3p 等内测版）各写一份，不覆盖已有条目。本机桌面版会话可能上千个，所以默认只补最近 200 个，免得侧栏被灌满。<b>完成后要重启 Claude 桌面版，侧栏才会刷新。</b></p>
   </div>
 
   <h2>新电脑</h2>
@@ -341,6 +343,7 @@ function rcFields(){const k=$('#rc-type').value;$('#rc-name').value=k;$('#rc-fie
 async function rcSave(){const params={};document.querySelectorAll('#rc-fields input').forEach(i=>params[i.dataset.k]=i.value.trim());await runBackend('/api/backend/rclone',{type:$('#rc-type').value,name:$('#rc-name').value.trim(),path:$('#rc-path').value.trim(),params})}
 async function copyRc(){const r=await api('/api/rclone-path');try{await navigator.clipboard.writeText(r.path||'')}catch(e){}alert('已复制：'+(r.path||'未找到'))}
 async function runRepair(){const r=await api('/api/repair',{});if(r.error){alert(r.error);return}showLog(false);pollLog(0,()=>load())}
+async function runReindex(){const r=await api('/api/reindex',{limit:+($('#rixn').value||0)});if(r.error){alert(r.error);return}showLog(false);pollLog(0,()=>load())}
 function genPass(){const a='abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';const b=new Uint32Array(28);crypto.getRandomValues(b);return [...b].map(x=>a[x%a.length]).join('')}
 async function runBackend(path,body){const r=await api(path,body);if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}
 async function gitTest(){const v=$('#g-git').value.trim();if(!v){alert('先填远端地址');return}const r=await api('/api/backend/git',{remote:v});if(r.error){alert(r.error);return}showLog(true);pollLog(0,()=>load())}

@@ -351,6 +351,9 @@ class H(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif u.path == "/api/repair":
                 TASK.run("repair", lambda: core.cmd_repair(logger=TASK.log)); self._json({"ok": True})
+            elif u.path == "/api/reindex":
+                lim = int(body.get("limit") or 0)
+                TASK.run("reindex", lambda: core.cmd_reindex(lim, logger=TASK.log)); self._json({"ok": True})
             elif u.path == "/api/open-privacy":
                 if sys.platform == "darwin": subprocess.run(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
                 self._json({"ok": True})

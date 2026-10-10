@@ -2,7 +2,7 @@
 """aisync 引擎（纯 Python，macOS / Windows / Linux 通用）
 L1 config   技能/agents/命令/记忆/设置 → git
 L2 sessions 会话记录/代码/sqlite     → restic 加密快照
-用法: python core.py {init,status,push,pull,snapshot,restore,remap,repair,doctor,schedule}
+用法: python core.py {init,status,push,pull,snapshot,restore,remap,repair,reindex,doctor,schedule}
 """
 import json, os, platform, re, shutil, sqlite3, subprocess, sys, time
 from pathlib import Path
@@ -38,7 +38,21 @@ if IS_WIN:
     _sp.Popen = _Popen   # subprocess.run/check_output 内部都走 Popen，一处覆盖全部生效
 
 def log(*a): print("[aisync]", *a, flush=True)
-def which(x): return shutil.which(x) is not None
+
+def bundled_bin_dirs():
+    """aisync 自带的 rclone/restic 所在目录：源码/便携版在 bundle/bin，mac .app 在 Frameworks/res/bin。
+    命令行启动时 PATH 里没有它们，所以要自己插进去，否则 CLI 和图形界面行为不一致。"""
+    ds = [AISYNC / "bundle" / "bin"]
+    try: ds.append(Path(sys.executable).resolve().parent.parent / "Frameworks" / "res" / "bin")
+    except Exception: pass
+    ds.append(Path(getattr(sys, "_MEIPASS", AISYNC)) / "bin")
+    return [d for d in ds if d.is_dir()]
+
+def tool_path():
+    dirs = [str(d) for d in bundled_bin_dirs()]
+    return os.pathsep.join(dirs + [os.environ.get("PATH", "")]) if dirs else os.environ.get("PATH", "")
+
+def which(x): return shutil.which(x, path=tool_path()) is not None
 def hostname(): return platform.node().split(".")[0]
 
 # ---------------- 配置 ----------------
@@ -58,7 +72,10 @@ def write_conf(updates):
     CONF.write_text("# aisync 配置\n" + "".join(f'{k}="{v}"\n' for k, v in c.items()), encoding="utf-8")
 
 def tool_env():
-    e = dict(os.environ); e.update({k: v for k, v in read_conf().items() if k.startswith("RESTIC")}); e.setdefault("RESTIC_PROGRESS_FPS", "1"); return e   # 非终端下 restic 默认 60s 才报一次进度
+    e = dict(os.environ); e.update({k: v for k, v in read_conf().items() if k.startswith("RESTIC")})
+    e.setdefault("RESTIC_PROGRESS_FPS", "1")   # 非终端下 restic 默认 60s 才报一次进度
+    e["PATH"] = tool_path()                    # 自带的 rclone/restic 优先，命令行和界面一致
+    return e
 
 def run(cmd, check=True, capture=False, cwd=None, logger=log, progress=None):
     logger("$ " + " ".join(str(c) for c in cmd if c != "--json"))
@@ -191,12 +208,42 @@ def restic_ok():
     if not c.get("RESTIC_REPOSITORY"): raise RuntimeError("未配置 restic 仓库")
     if not Path(c["RESTIC_PASSWORD_FILE"]).exists(): raise RuntimeError("未设置 restic 密码")
 
+def rclone_diag(logger=log):
+    """restic 会把 rclone 的真实报错吞成 'error talking HTTP to rclone: exit status 1'。
+    仓库是 rclone: 开头时自己跑一次 rclone lsd，把真实原因写进日志。"""
+    repo = read_conf().get("RESTIC_REPOSITORY", "")
+    if not repo.startswith("rclone:"): return
+    remote = repo[len("rclone:"):].split(":")[0]
+    if not remote: return
+    logger(f"正在诊断网盘连接（rclone lsd {remote}:）…")
+    r = subprocess.run(["rclone", "lsd", f"{remote}:", "--max-depth", "1"], capture_output=True,
+                       text=True, env=tool_env(), encoding="utf-8", errors="replace")
+    msg = ((r.stderr or "") + (r.stdout or "")).strip()
+    if r.returncode == 0: logger(f"  网盘连接正常，问题不在授权（{remote}: 可访问）"); return
+    logger("  网盘真实报错：" + (msg[-600:] or f"退出码 {r.returncode}"))
+    if re.search(r"invalid_grant|token|unauthorized|oauth", msg, re.I):
+        logger("  ⚠ Google Drive 授权已失效，请到「设置 → 网盘」里重新授权后再试")
+
 def sqlite_backup(src: Path, dst: Path):
     """用 sqlite 在线备份 API，WAL 模式下也一致，不需要 sqlite3 命令行"""
     dst.parent.mkdir(parents=True, exist_ok=True)
     s = sqlite3.connect(f"file:{src}?mode=ro", uri=True); d = sqlite3.connect(str(dst))
     with d: s.backup(d)
     s.close(); d.close()
+
+def _log_coverage(paths, logger=log):
+    """打印「已备份 N / 本机共 M 个会话」。只勾了几个却以为全量备份过，是真踩过的坑。"""
+    sel = {str(Path(p)) for p in paths}
+    def _in_sel(f: Path):
+        s = str(f)
+        return any(s == p or s.startswith(p + os.sep) for p in sel)
+    for name, root, pat in (("Claude", CLAUDE / "projects", "*.jsonl"), ("Codex", CODEX / "sessions", "*.jsonl")):
+        if not root.exists(): continue
+        all_f = list(root.rglob(pat))
+        if not all_f: continue
+        got = sum(1 for f in all_f if _in_sel(f))
+        tip = "" if got >= len(all_f) else "（其余没勾选，云端不会有）"
+        logger(f"  {name} 会话：本次备份 {got} / 本机共 {len(all_f)} 个{tip}")
 
 def cmd_snapshot(paths, include_sqlite=True, logger=log, progress=None):
     restic_ok()
@@ -207,6 +254,7 @@ def cmd_snapshot(paths, include_sqlite=True, logger=log, progress=None):
             if (CODEX / s).exists(): logger(f"sqlite 备份 {s}"); sqlite_backup(CODEX / s, STAGE / "codex" / s)
         paths.append(str(STAGE))
     listf = CACHE / "backup-paths.txt"; listf.write_text("\n".join(paths), encoding="utf-8")
+    _log_coverage(paths, logger=logger)
     repo = read_conf().get("RESTIC_REPOSITORY", ""); tune = []
     run(["restic", "unlock"], check=False, logger=lambda m: None)   # 清理上次被中断留下的失效锁（只删无进程持有的锁）
     if repo.startswith("rclone:"):   # 网盘 API 有频率限制（尤其 Google Drive 共享 client_id）：降并发、大分块、限速
@@ -216,7 +264,9 @@ def cmd_snapshot(paths, include_sqlite=True, logger=log, progress=None):
     rc = run(["restic", "backup", "--json", *tune, "--files-from-verbatim", str(listf), "--tag", "aisync", "--tag", hostname(),
          *sum((["--exclude", e] for e in ("node_modules", ".venv", "__pycache__", "*.tmp", ".DS_Store", "Thumbs.db")), []), "--exclude-caches"], check=False, logger=logger, progress=progress)
     if rc == 3: logger("⚠ 快照已创建，但上面列出的文件/目录没读到。macOS 上通常是权限问题：系统设置 → 隐私与安全性 → 完全磁盘访问权限，把 aisync 加进去后重新上云")
-    elif rc: raise RuntimeError(f"restic 退出码 {rc}")
+    elif rc:
+        rclone_diag(logger=logger)
+        raise RuntimeError(f"restic 退出码 {rc}")
     run(["restic", "forget", *tune, "--tag", "aisync", "--keep-daily", "14", "--keep-weekly", "8", "--keep-monthly", "12", "--prune", "-q"], check=False, logger=logger)
     out = run(["restic", "snapshots", "--json", "--latest", "1", "--tag", "aisync"], capture=True, logger=logger)
     try: return json.loads(out)[-1]["short_id"]
@@ -259,7 +309,9 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
         logger(m)
     rc = run(["restic", "restore", "--json", "--exclude-xattr", "*", *tune, snapshot, "--target", str(target), *sum((["--include", p] for p in paths), [])], logger=_rlog, progress=progress, check=False)
     if rc and ea[0] and ea[0] >= 1: logger(f"⚠ {ea[0]} 处扩展属性未写入（跨系统 macOS 元数据，Windows 不支持），文件内容已完整恢复，忽略即可")
-    elif rc: raise RuntimeError(f"restic restore 退出码 {rc}")
+    elif rc:
+        rclone_diag(logger=logger)
+        raise RuntimeError(f"restic restore 退出码 {rc}")
     pending = []
     for p in paths:
         src = _restored_location(target, p)
@@ -282,7 +334,13 @@ def cmd_restore(paths, snapshot="latest", old_home=None, logger=log, progress=No
     if desktop_index:
         pm = dict(targets)
         if old_home and old_home != str(HOME): pm.setdefault(old_home, str(HOME))
-        try: import_desktop_index(REPO / "desktop-index", path_map=pm, logger=logger)
+        # 云端索引往往比恢复的会话少（备份时只勾了一部分，索引又是另一次导出的），
+        # 差额在这里按会话内容补上；only 限定为「这次恢复的这批」，不碰目标机自己的老会话。
+        restored_ids = None
+        rp = _restored_location(target, str(CLAUDE / "projects"))
+        if rp: restored_ids = {f.stem for f in rp.rglob("*.jsonl")}
+        try: import_desktop_index(REPO / "desktop-index", path_map=pm, logger=logger,
+                                  synth=bool(restored_ids), only=restored_ids)
         except Exception as e: logger(f"⚠ 写回 Claude 桌面版索引失败（{e}），不影响已恢复的会话")
         try:
             import_codex_index(REPO / "codex-index", path_map=pm, logger=logger)
@@ -410,34 +468,43 @@ def cmd_repair(logger=log):
 # ---------------- 桌面版会话索引（侧栏靠它显示，不是 ~/.claude/projects） ----------------
 # 结构：<AppSupport>/Claude/claude-code-sessions/<accountUuid>/<profileUuid>/local_<uuid>.json
 # 两层 uuid 是本机账号/设备标识，换机后不同，所以恢复时要探测目标机自己的目录，不能照搬。
-DESKTOP_DIRS = {
-    "darwin": Path.home() / "Library/Application Support/Claude",
-    "win32": Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming")) / "Claude",
-}
+# 同一台机器可能同时装了多个变体（官方版 Claude、内测版 Claude-3p…），各自一套索引，
+# 写死一个目录会导致「导出少了、导入写错地方、侧栏永远空白」。
+DESKTOP_NAME = re.compile(r"^Claude(-[A-Za-z0-9._]+)?$", re.I)   # 匹配 Claude、Claude-3p；不匹配 "Claude Code"
 # 只保留可移植字段；机器相关的（Chrome 标签组、MCP 配置、工具快照等）一律不带
 INDEX_KEEP = {"sessionId", "cliSessionId", "cwd", "originCwd", "title", "titleSource",
               "createdAt", "lastActivityAt", "lastFocusedAt", "model", "effort",
               "isArchived", "permissionMode", "completedTurns"}
 
-def desktop_root():
-    d = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
-    return d / "claude-code-sessions"
+def _desktop_parent():
+    if IS_WIN: return Path(os.environ.get("APPDATA") or HOME / "AppData/Roaming")
+    if IS_MAC: return HOME / "Library/Application Support"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+
+def desktop_bases():
+    """本机所有 Claude 桌面版数据目录，官方版排第一；AISYNC_DESKTOP_DIR 可手动指定（os.pathsep 分隔）"""
+    env = os.environ.get("AISYNC_DESKTOP_DIR")
+    if env: return [Path(p) for p in env.split(os.pathsep) if p and Path(p).is_dir()]
+    try: ds = [d for d in _desktop_parent().iterdir() if d.is_dir() and DESKTOP_NAME.match(d.name)]
+    except OSError: return []
+    return sorted(ds, key=lambda d: (d.name.lower() != "claude", d.name.lower()))
 
 def desktop_installed():
-    """桌面版是否装过：App Support/Claude 目录存在即可，不要求已经开过 Code 会话。"""
-    d = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
-    return d.exists()
+    """桌面版是否装过：App Support 下有任一 Claude* 目录即可，不要求已经开过 Code 会话。"""
+    return bool(desktop_bases())
 
-def desktop_index_dir(create=False):
-    """返回本机的 <account>/<profile> 索引目录；换机后 uuid 不同，靠探测而非硬编码。
+def desktop_index_dir(base: Path, create=False):
+    """返回该变体的 <account>/<profile> 索引目录；换机后 uuid 不同，靠探测而非硬编码。
     装了桌面版但从没开过 Code 会话时该目录不存在，create=True 时按现有账号补建，
     否则只恢复 transcript、侧栏依旧空白。"""
-    root = desktop_root()
-    cands = [c for c in sorted(root.glob("*/*"), key=lambda p: -p.stat().st_mtime) if c.is_dir()] if root.exists() else []
-    if cands: return cands[0]
-    if not create or not desktop_installed(): return None
+    root = base / "claude-code-sessions"
+    # 同一变体下可能有多个账号/profile 目录，其中有的是空的（换过账号）。
+    # 先挑真正有条目的那个，再按修改时间——只看 mtime 会挑到空目录，导致漏导出、写错地方。
+    cands = [c for c in root.glob("*/*") if c.is_dir()] if root.exists() else []
+    if cands:
+        return sorted(cands, key=lambda p: (-len(list(p.glob("local_*.json"))), -p.stat().st_mtime))[0]
+    if not create: return None
     # 从桌面版自己的配置里取账号 uuid（ant-device-registry.json 的键就是 account）
-    base = DESKTOP_DIRS.get(sys.platform) or (Path.home() / ".config/Claude")
     acct = prof = None
     reg = base / "ant-device-registry.json"
     if reg.exists():
@@ -456,51 +523,146 @@ def desktop_index_dir(create=False):
     return d
 
 def export_desktop_index(dst: Path, logger=log):
-    """把桌面版索引里的会话条目导出到 repo（只留可移植字段）。"""
-    d = desktop_index_dir()
-    if not d: logger("  未发现 Claude 桌面版索引，跳过"); return 0
+    """把所有桌面版变体的索引条目合并导出到 repo（只留可移植字段）。
+    同名条目在多个变体里都有时，保留 lastActivityAt 最大的那条。"""
+    bases = desktop_bases()
+    if not bases: logger("  未发现 Claude 桌面版索引，跳过"); return 0
+    merged = {}   # 文件名 -> slim
+    for base in bases:
+        d = desktop_index_dir(base)
+        if not d: logger(f"  {base.name}：没有 Code 会话索引，跳过"); continue
+        cnt = 0
+        for f in d.glob("local_*.json"):
+            try: obj = json.loads(f.read_text(encoding="utf-8"))
+            except Exception: continue
+            slim = {k: v for k, v in obj.items() if k in INDEX_KEEP}
+            if not slim.get("cliSessionId"): continue
+            old = merged.get(f.name)
+            if old and (old.get("lastActivityAt") or 0) >= (slim.get("lastActivityAt") or 0): continue
+            merged[f.name] = slim; cnt += 1
+        logger(f"  {base.name}：索引 {cnt} 条")
     dst.mkdir(parents=True, exist_ok=True)
     for f in dst.glob("*.json"): f.unlink()
-    n = 0
-    for f in d.glob("local_*.json"):
-        try: obj = json.loads(f.read_text(encoding="utf-8"))
-        except Exception: continue
-        slim = {k: v for k, v in obj.items() if k in INDEX_KEEP}
-        if not slim.get("cliSessionId"): continue
-        (dst / f.name).write_text(json.dumps(slim, ensure_ascii=False, indent=1), encoding="utf-8")
-        n += 1
-    logger(f"  桌面版会话索引：导出 {n} 条")
-    return n
+    for name, slim in merged.items():
+        (dst / name).write_text(json.dumps(slim, ensure_ascii=False, indent=1), encoding="utf-8")
+    logger(f"  桌面版会话索引：导出 {len(merged)} 条（{len(bases)} 个变体合并）")
+    return len(merged)
 
-def import_desktop_index(src: Path, path_map=None, logger=log):
-    """把索引写回本机桌面版。只写 cliSessionId 能在本机找到 jsonl 的条目，
-    并按 path_map 改写 cwd；已存在的同名条目不覆盖（保护本机现有会话列表）。"""
-    if not src.exists(): logger("  云端没有桌面版索引，跳过"); return 0
-    d = desktop_index_dir(create=True)
-    if not d:
-        logger("  未发现 Claude 桌面版（App Support 下无 Claude 目录），跳过索引恢复" if not desktop_installed()
-               else "  Claude 桌面版已安装但拿不到账号标识，跳过索引恢复；先在桌面版里开一个 Code 会话再恢复即可"); return 0
+def import_desktop_index(src: Path, path_map=None, logger=log, synth=False, only=None, limit=None):
+    """把索引写回本机的每一个桌面版变体。只写 cliSessionId 能在本机找到 jsonl 的条目，
+    并按 path_map 改写 cwd；已存在的同名条目不覆盖（保护本机现有会话列表）。
+    synth=True 时，本机有 jsonl 但云端索引里没有的桌面版会话也会现场合成条目。"""
+    bases = desktop_bases()
+    if not bases:
+        logger("  未发现 Claude 桌面版（App Support 下无 Claude* 目录），跳过索引恢复"); return 0
     have = {p.stem for p in (CLAUDE / "projects").rglob("*.jsonl")} if (CLAUDE / "projects").exists() else set()
-    n = skipped = 0
-    for f in sorted(src.glob("local_*.json")):
-        try: obj = json.loads(f.read_text(encoding="utf-8"))
-        except Exception: continue
-        cli = obj.get("cliSessionId")
-        if cli not in have: skipped += 1; continue      # 没恢复对应会话就不要造孤儿条目
-        for k in ("cwd", "originCwd"):
-            if obj.get(k) and path_map:
-                for old, new in path_map.items():
-                    o = old.replace("\\", "/").rstrip("/"); c = obj[k].replace("\\", "/").rstrip("/")
-                    if c == o: obj[k] = new; break
-                    if c.startswith(o + "/"):
-                        tail = c[len(o):]
-                        obj[k] = new + (tail.replace("/", "\\") if IS_WIN else tail); break
-        tgt = d / f.name
-        if tgt.exists(): skipped += 1; continue          # 不覆盖本机已有条目
-        tgt.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
-        n += 1
-    logger(f"  桌面版会话索引：写入 {n} 条，跳过 {skipped} 条（本机已有或无对应会话）")
-    if n: logger("  ⚠ 重启 Claude 桌面版后侧栏才会刷新")
+    # 先把要写的条目准备好（云端索引 + 本机多出来的 jsonl 现场合成），再逐个变体落盘
+    entries, no_jsonl = {}, 0
+    if src.exists():
+        for f in sorted(src.glob("local_*.json")):
+            try: obj = json.loads(f.read_text(encoding="utf-8"))
+            except Exception: continue
+            if obj.get("cliSessionId") not in have: no_jsonl += 1; continue   # 没恢复对应会话就不要造孤儿条目
+            for k in ("cwd", "originCwd"):
+                if obj.get(k) and path_map:
+                    for old, new in path_map.items():
+                        o = old.replace("\\", "/").rstrip("/"); c = obj[k].replace("\\", "/").rstrip("/")
+                        if c == o: obj[k] = new; break
+                        if c.startswith(o + "/"):
+                            tail = c[len(o):]
+                            obj[k] = new + (tail.replace("/", "\\") if IS_WIN else tail); break
+            entries[f.name] = obj
+    else:
+        logger("  云端没有桌面版索引，改为从本机会话文件现场重建")
+    if synth:
+        covered = {o.get("cliSessionId") for o in entries.values()}
+        made = _synth_index_entries(covered, logger=logger, only=only, limit=limit)
+        entries.update(made)
+    if not entries:
+        logger("  没有可写入的索引条目" + (f"（{no_jsonl} 条在本机找不到对应会话文件）" if no_jsonl else "")); return 0
+    total = 0
+    for base in bases:
+        d = desktop_index_dir(base, create=True)
+        if not d:
+            logger(f"  {base.name}：拿不到账号标识，跳过；先在里面开一个 Code 会话再试"); continue
+        n = dup = 0
+        for name, obj in entries.items():
+            tgt = d / name
+            if tgt.exists(): dup += 1; continue          # 不覆盖本机已有条目
+            tgt.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+            n += 1
+        logger(f"  {base.name}：写入 {n} 条" + (f"，已有 {dup} 条未覆盖" if dup else ""))
+        total += n
+    if no_jsonl: logger(f"  跳过 {no_jsonl} 条：本机没有对应的会话文件")
+    if total: logger("  ⚠ 重启 Claude 桌面版后侧栏才会刷新")
+    return total
+
+def _synth_index_entries(covered, logger=log, only=None, limit=None):
+    """给本机有 jsonl、但云端索引里没有的桌面版会话现场合成索引条目。
+    只认 entrypoint == claude-desktop 的会话，命令行会话不进侧栏、保持原样。
+    only: 只给这批 cliSessionId 合成（恢复时传刚恢复的那批，不动目标机自己的老会话）。
+    limit: 最多合成多少条，按最后活动时间从新到旧留。"""
+    import uuid as _uuid
+    root = CLAUDE / "projects"
+    if not root.exists(): return {}
+    covered = set(covered)
+    for base in desktop_bases():        # 本机侧栏里已经有的条目也算覆盖，否则重复点按钮会越写越多
+        d = desktop_index_dir(base)
+        if not d: continue
+        for f in d.glob("local_*.json"):
+            try: covered.add(json.loads(f.read_text(encoding="utf-8")).get("cliSessionId"))
+            except Exception: pass
+    out = {}
+    for p in sorted(root.rglob("*.jsonl")):
+        if p.stem in covered: continue
+        if only is not None and p.stem not in only: continue
+        cwd = title = tsrc = None; first = last = None; desktop = False
+        try:
+            with p.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line: continue
+                    try: r = json.loads(line)
+                    except Exception: continue
+                    if not isinstance(r, dict): continue
+                    if r.get("entrypoint") == "claude-desktop": desktop = True
+                    if not cwd and r.get("cwd"): cwd = r["cwd"]
+                    t = r.get("timestamp")
+                    if t: first = first or t; last = t
+                    if r.get("type") == "custom-title" and r.get("title"): title, tsrc = r["title"], "custom"
+                    elif r.get("type") == "ai-title" and r.get("title") and tsrc != "custom": title, tsrc = r["title"], "ai"
+                    elif not title and r.get("type") == "user":
+                        m = r.get("message") or {}
+                        c = m.get("content")
+                        if isinstance(c, list): c = " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+                        if isinstance(c, str) and c.strip() and not c.startswith("<"):
+                            title, tsrc = c.strip().replace("\n", " ")[:50], "first-message"
+        except OSError: continue
+        if not desktop or not cwd: continue
+        def _ms(s):
+            try: return int(time.mktime(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")) * 1000)
+            except Exception: return int(time.time() * 1000)
+        sid = "local_" + str(_uuid.uuid4())
+        out[sid + ".json"] = {"sessionId": sid, "cliSessionId": p.stem, "cwd": cwd, "originCwd": cwd,
+                              "title": title or p.stem[:8], "titleSource": tsrc or "first-message",
+                              "createdAt": _ms(first) if first else int(time.time() * 1000),
+                              "lastActivityAt": _ms(last) if last else int(time.time() * 1000),
+                              "isArchived": False}
+    if limit and len(out) > limit:
+        keep = sorted(out.items(), key=lambda kv: -(kv[1].get("lastActivityAt") or 0))[:limit]
+        logger(f"  本机另有 {len(out)} 个桌面版会话没有索引，按最近活动只取 {limit} 个")
+        out = dict(keep)
+    elif out: logger(f"  本机另有 {len(out)} 个桌面版会话没有索引，已按会话内容现场重建")
+    return out
+
+def cmd_reindex(limit=200, logger=log):
+    """只重建桌面版侧栏索引，不联网。会话 jsonl 已经在 ~/.claude/projects 但侧栏不显示时用。
+    limit：本机桌面版会话可能上千个，默认只补最近 200 个，免得侧栏被灌满；0 表示全部。"""
+    logger("重建桌面版侧栏索引…")
+    bases = desktop_bases()
+    logger("  本机桌面版：" + ("、".join(b.name for b in bases) if bases else "未发现"))
+    n = import_desktop_index(REPO / "desktop-index", logger=logger, synth=True, limit=limit or None)
+    logger(f"完成：共写入 {n} 条索引" + ("，重启 Claude 桌面版后侧栏即可看到" if n else ""))
     return n
 
 # ---------------- Codex 桌面端会话索引（侧栏靠 state_5.sqlite 的 threads 表） ----------------
@@ -752,6 +914,7 @@ def main(argv):
     elif c == "restore": print("待手工处理:", cmd_restore([str(CLAUDE / "projects"), str(CODEX / "sessions")], a[1] if len(a) > 1 else "latest")); cmd_doctor()
     elif c == "remap": cmd_remap(a[1], a[2] if len(a) > 2 else str(HOME))
     elif c == "repair": cmd_repair()
+    elif c == "reindex": cmd_reindex(int(a[1]) if len(a) > 1 else 200)
     elif c == "doctor": cmd_doctor()
     elif c == "schedule": cmd_schedule()
     elif c == "ui":
