@@ -22,6 +22,15 @@ L1_CODEX = ["config.toml", "AGENTS.md", "rules", "skills", "prompts", "memories"
 L2_SQLITE = ["thread_history_1.sqlite", "memories_1.sqlite", "state_5.sqlite", "goals_1.sqlite"]
 SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", "target", "dist", "build", ".next"}
 SECRET = re.compile(r"(key|token|secret|password|passwd)", re.I)
+# 像密钥的「值」。只看键名不够：权限规则里就埋着 gh secret set ... --body "sk-..." 这种明文。
+TOKEN_VALUE = re.compile(r"""(?x)
+    sk-[A-Za-z0-9_-]{20,}             # OpenAI / Anthropic 风格
+  | gh[pousr]_[A-Za-z0-9]{20,}        # GitHub token
+  | github_pat_[A-Za-z0-9_]{20,}
+  | AIza[A-Za-z0-9_-]{30,}            # Google API key
+  | xox[abprs]-[A-Za-z0-9-]{10,}      # Slack
+  | AKIA[0-9A-Z]{16}                  # AWS access key id
+""")
 
 # Windows: 隐藏子进程（git/rclone/restic）弹出的黑色 cmd 窗口 —— 全局给 subprocess 打补丁
 if IS_WIN:
@@ -106,11 +115,30 @@ def run(cmd, check=True, capture=False, cwd=None, logger=log, progress=None):
     return p.returncode
 
 # ---------------- 脱敏 ----------------
-def scrub_settings(src, dst):
-    d = json.loads(Path(src).read_text(encoding="utf-8"))
+def scrub_settings(src, dst, logger=log):
+    """脱敏后写入 repo。手改坏的 settings.json 不该让整个 push 崩掉：
+    解析不了就跳过这个文件（它可能含明文 token，绝不能原样推上去）。"""
+    try: d = json.loads(Path(src).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        logger(f"⚠ {Path(src).name} 不是合法 JSON（第 {e.lineno} 行第 {e.colno} 列：{e.msg}），"
+               "本次跳过它；修好后重新上云即可。它坏着的时候 Claude 也读不到里面的设置")
+        return False
     for k in list(d.get("env", {})):
         if SECRET.search(k): d["env"][k] = f"<REDACTED:{k}>"
+    # 再全文扫一遍像密钥的值：权限规则、hook 命令行里都埋过明文，只看 env 的键名漏得到。
+    hits = [0]
+    def _walk(v):
+        if isinstance(v, str):
+            s = TOKEN_VALUE.sub("<REDACTED>", v)
+            if s != v: hits[0] += 1
+            return s
+        if isinstance(v, list): return [_walk(x) for x in v]
+        if isinstance(v, dict): return {k: _walk(x) for k, x in v.items()}
+        return v
+    d = _walk(d)
+    if hits[0]: logger(f"  {Path(src).name}：{hits[0]} 处明文密钥已脱敏（不在 env 里，藏在权限规则/命令行中）")
     Path(dst).write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+    return True
 
 def scrub_toml(src, dst):
     s = Path(src).read_text(encoding="utf-8")
@@ -130,7 +158,8 @@ def stage_l1(logger=log):
         s = CLAUDE / p
         if not s.exists(): continue
         d = REPO / "claude" / p; d.parent.mkdir(parents=True, exist_ok=True)
-        if p == "settings.json": scrub_settings(s, d)
+        # settings.local.json 同样可能含明文 token，之前是 copy2 原样推上去的
+        if p in ("settings.json", "settings.local.json"): scrub_settings(s, d, logger=logger)
         elif s.is_dir(): copytree(s, d)
         else: shutil.copy2(s, d)
     for m in (CLAUDE / "projects").glob("*/memory") if (CLAUDE / "projects").exists() else []:
